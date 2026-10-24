@@ -26,8 +26,9 @@ from ..models.experiment_state import MeasurementSample
 class PlotsView(tk.Frame):
     """Componente que integra las figuras científicas de Matplotlib en Tkinter."""
 
-    def __init__(self, parent: tk.Widget, **kwargs) -> None:
+    def __init__(self, parent: tk.Widget, on_expand_plot: Optional[Callable[[], None]] = None, **kwargs) -> None:
         super().__init__(parent, bg=Theme.BG_CARD, **kwargs)
+        self.on_expand_plot = on_expand_plot
 
         # Selector de modo de tiempo para las gráficas
         self.time_mode_var = tk.StringVar(value="total")  # "total" o "eff"
@@ -74,6 +75,15 @@ class PlotsView(tk.Frame):
             font=(Theme.FONT_FAMILY, 9)
         )
         rb_eff.pack(side=tk.LEFT, padx=6)
+
+        if self.on_expand_plot:
+            btn_expand = ttk.Button(
+                top_bar,
+                text="🔍 Ampliar Gráfica",
+                style="Primary.TButton",
+                command=self.on_expand_plot
+            )
+            btn_expand.pack(side=tk.RIGHT, padx=4)
 
         # Crear Figura Matplotlib con tema oscuro científico
         self.fig = Figure(figsize=(7.5, 4.2), dpi=100)

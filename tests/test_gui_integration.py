@@ -102,6 +102,60 @@ class TestGUIIntegration(unittest.TestCase):
         summary_dlg()
         self.root.update()
 
+    def test_detailed_plot_viewer_features(self):
+        """Verifica la inicialización, cambio de vistas y medidas del Visor Detallado."""
+        ctrl = self.app.controller
+        ctrl.start()
+        self.root.update()
+        time.sleep(0.03)
+        ctrl.pause()
+        self.root.update()
+        time.sleep(0.03)
+        ctrl.resume()
+        self.root.update()
+        time.sleep(0.03)
+        ctrl.stop("Prueba para visor detallado")
+        self.root.update()
+
+        # Abrir el Visor Detallado
+        viewer = self.app.show_detailed_plot_viewer()
+        self.root.update()
+
+        # Probar cambio de modos de visualización
+        from src.gui.detailed_plot_viewer import DetailedPlotViewer
+        # Buscar el widget hijo DetailedPlotViewer en root
+        viewers = [w for w in self.root.winfo_children() if isinstance(w, DetailedPlotViewer)]
+        self.assertGreater(len(viewers), 0)
+        v = viewers[0]
+
+        # Verificar extracción de puntos notables
+        notable = v._extract_notable_points()
+        self.assertGreaterEqual(len(notable), 3)  # Inicio, pausa, reanudación/fin
+
+        # Alternar vistas
+        for mode in ["Solo Posición x(t)", "Solo Velocidad v(t)", "Dual: x(t) y v(t)"]:
+            v.view_mode_var.set(mode)
+            v._on_controls_changed()
+            self.root.update()
+
+        # Alternar checkboxes de medidas
+        v.show_slope_var.set(False)
+        v.show_pauses_var.set(False)
+        v.show_integral_var.set(False)
+        v.show_minor_grid_var.set(False)
+        v._on_controls_changed()
+        self.root.update()
+
+        v.show_slope_var.set(True)
+        v.show_pauses_var.set(True)
+        v.show_integral_var.set(True)
+        v.show_minor_grid_var.set(True)
+        v._on_controls_changed()
+        self.root.update()
+
+        v.destroy()
+        self.root.update()
+
 
 if __name__ == "__main__":
     unittest.main()

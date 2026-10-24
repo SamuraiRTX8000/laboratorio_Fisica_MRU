@@ -195,7 +195,19 @@ En la esquina superior de las gráficas de Matplotlib, el usuario puede alternar
 - **Tiempo Global (con pausas):** Muestra el experimento completo tal como ocurrió en el mundo real (las pausas se ven como tramos horizontales en $x-t$ y caídas a cero en $v-t$).
 - **Tiempo Efectivo (MRU continuo):** Muestra únicamente el comportamiento lineal continuo del modelo ideal.
 
-### 6.6. Exportación a CSV e Informe Científico
+### 6.6. Visor Científico Avanzado y Ampliación de Gráficas en el Plano Cartesiano (🔍)
+Al presionar el botón **"🔍 Ampliar Gráfica"** (en la esquina de las gráficas o en el panel de control, o mediante el atajo **Ctrl+G** / **F11**), se abre una ventana de gran formato diseñada para el análisis minucioso:
+- **Plano Cartesiano de Alta Resolución:** Ejes X e Y con marcas mayores, menores y cuadrícula científica fina.
+- **Herramientas de Navegación de Matplotlib:** Lupa de aumento rectangular (zoom libre en cualquier intervalo), paneo/arrastre para desplazarse, botón Home y exportador de imágenes en 300 DPI (PNG, PDF vectorial, SVG).
+- **Anotaciones de Medidas Físicas en el Plano:**
+  - **Triángulo de Pendiente:** Muestra explícitamente los catetos $\Delta t$ y $\Delta x$, calculando en el plano la pendiente de la recta $m = \frac{\Delta x}{\Delta t} = v$ (velocidad constante).
+  - **Intervalos de Pausa:** Zonas sombreadas en ámbar que marcan con precisión el inicio, fin y duración de cada pausa con la indicación $m = 0$ y velocidad nula.
+  - **Integral de Desplazamiento:** Área sombreada bajo la curva de velocidad que demuestra visualmente que $\text{Área} = \int v\,dt = \Delta x$.
+  - **Puntos Notables:** Puntos de inicio $(0, x_0)$ y llegada $(t_f, x_f)$ con cotas y etiquetas exactas.
+- **Telemetría Dinámica con Mira Telescópica (Crosshair):** Al desplazar el ratón sobre la gráfica, se proyectan líneas guía y una barra digital superior muestra en tiempo real las coordenadas exactas $(t, x, v, \text{estado})$ de la muestra más cercana.
+- **Pestaña con Tabla de Puntos Notables:** Desglose cronológico de todos los eventos críticos del experimento (inicio, pausas, reanudaciones y parada final).
+
+### 6.7. Exportación a CSV e Informe Científico
 - El botón **"Ver Informe Científico"** despliega un resumen completo con tabla comparativa de magnitudes, verificación del modelo MRU y comentarios pedagógicos.
 - El botón **"Exportar Datos a CSV"** guarda un archivo con las muestras reales registradas durante la simulación con metadatos científicos e intervalos de tiempo.
 

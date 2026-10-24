@@ -19,6 +19,7 @@ from .plots_view import PlotsView
 from .telemetry_panel import TelemetryPanel
 from .control_panel import ControlPanel
 from .dialogs import SummaryDialog, TheoryGuideDialog
+from .detailed_plot_viewer import DetailedPlotViewer
 from ..controllers.simulation_controller import SimulationController
 from ..data.exporter import ExperimentDataExporter
 
@@ -62,6 +63,8 @@ class MainWindow:
         self.root.bind("<space>", self._on_spacebar_pressed)
         self.root.bind("<Escape>", lambda e: self.controller.stop("Detenido mediante Escape"))
         self.root.bind("<Control-r>", lambda e: self.controller.reset())
+        self.root.bind("<Control-g>", lambda e: self.show_detailed_plot_viewer())
+        self.root.bind("<F11>", lambda e: self.show_detailed_plot_viewer())
 
     def _build_menu(self) -> None:
         """Construye la barra de menú superior estándar."""
@@ -83,7 +86,8 @@ class MainWindow:
         menu_exp.add_command(label="Finalizar (Esc)", command=lambda: self.controller.stop())
         menu_exp.add_command(label="Reiniciar (Ctrl+R)", command=lambda: self.controller.reset())
         menu_exp.add_separator()
-        menu_exp.add_command(label="Ver Informe Científico", command=self.show_summary_dialog)
+        menu_exp.add_command(label="🔍 Ampliar Gráfica y Ver en Detalle... (Ctrl+G)", command=self.show_detailed_plot_viewer)
+        menu_exp.add_command(label="📊 Ver Informe Científico", command=self.show_summary_dialog)
 
         # Menú Ayuda
         menu_help = tk.Menu(menubar, tearoff=0, bg=Theme.BG_CARD, fg=Theme.TEXT_LIGHT)
@@ -153,6 +157,7 @@ class MainWindow:
             on_show_summary=self.show_summary_dialog,
             on_export_csv=self.show_export_csv_dialog,
             on_show_theory=self.show_theory_dialog,
+            on_expand_plot=self.show_detailed_plot_viewer,
             width=320
         )
         self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
@@ -174,7 +179,10 @@ class MainWindow:
         self.telemetry_panel.pack(fill=tk.X, pady=(0, 6))
 
         # 3. Gráficas científicas inferiores
-        self.plots_view = PlotsView(right_container)
+        self.plots_view = PlotsView(
+            right_container,
+            on_expand_plot=self.show_detailed_plot_viewer
+        )
         self.plots_view.pack(fill=tk.BOTH, expand=True)
 
     def _on_spacebar_pressed(self, event) -> None:
@@ -247,6 +255,23 @@ class MainWindow:
                 )
             except Exception as e:
                 messagebox.showerror("Error al Exportar", f"Error al guardar el archivo:\n{str(e)}", parent=self.root)
+
+    def show_detailed_plot_viewer(self) -> None:
+        """Abre el Visor Científico Avanzado para ampliar e inspeccionar el plano cartesiano."""
+        if self.controller is None:
+            return
+        summary = self.controller.summary
+        samples = self.controller.samples
+        track = self.controller.track
+        params = self.controller.params
+
+        DetailedPlotViewer(
+            parent=self.root,
+            samples=samples,
+            summary=summary,
+            track=track,
+            params=params
+        )
 
     def show_theory_dialog(self) -> None:
         """Abre la ventana modal con la guía teórica interactiva."""

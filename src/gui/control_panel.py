@@ -32,6 +32,7 @@ class ControlPanel(tk.Frame):
         on_show_summary: Callable[[], None],
         on_export_csv: Callable[[], None],
         on_show_theory: Callable[[], None],
+        on_expand_plot: Optional[Callable[[], None]] = None,
         **kwargs
     ) -> None:
         super().__init__(parent, bg=Theme.BG_CARD, padx=12, pady=12, **kwargs)
@@ -45,6 +46,7 @@ class ControlPanel(tk.Frame):
         self.on_show_summary = on_show_summary
         self.on_export_csv = on_export_csv
         self.on_show_theory = on_show_theory
+        self.on_expand_plot = on_expand_plot
 
         # Variables de control
         self.preset_var = tk.StringVar(value="Personalizado")
@@ -331,6 +333,15 @@ class ControlPanel(tk.Frame):
             pady=6
         )
         sec_tools.pack(fill=tk.X, pady=(0, 0))
+
+        if self.on_expand_plot:
+            self.btn_expand = ttk.Button(
+                sec_tools,
+                text="🔍  Ampliar Gráfica (Modo Detallado)",
+                style="Primary.TButton",
+                command=self.on_expand_plot
+            )
+            self.btn_expand.pack(fill=tk.X, pady=2)
 
         self.btn_summary = ttk.Button(
             sec_tools,
