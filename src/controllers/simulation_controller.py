@@ -7,6 +7,7 @@ la actualización periódica de la telemetría, el redibujado de la pista y las 
 """
 
 import time
+import datetime
 from typing import Optional, Callable
 from ..models.physics import TrackConfig, MRUParameters, PhysicalState
 from ..models.experiment_state import (
@@ -15,19 +16,34 @@ from ..models.experiment_state import (
     ExperimentSummary,
     MeasurementSample
 )
+from ..data.schema import PhysicsModel, DataSource, ExperimentRecord
+from ..data.repository import ExperimentRepository
 
 
 class SimulationController:
     """Controlador principal de la simulación de MRU."""
 
-    def __init__(self, root, get_ui_components: Callable[[], tuple]) -> None:
+    def __init__(
+        self,
+        root,
+        get_ui_components: Callable[[], tuple],
+        repository: Optional[ExperimentRepository] = None,
+        on_experiment_saved: Optional[Callable[[ExperimentRecord], None]] = None,
+        on_save_error: Optional[Callable[[Exception], None]] = None
+    ) -> None:
         """
         Args:
             root: Ventana principal de Tkinter (para programar after()).
             get_ui_components: Función que retorna (track_view, plots_view, telemetry_panel, control_panel).
+            repository: Repositorio persistente de datos científicos (opcional).
+            on_experiment_saved: Callback ejecutado cuando se auto-guarda un experimento.
+            on_save_error: Callback ejecutado en caso de error de validación o guardado.
         """
         self.root = root
         self.get_ui_components = get_ui_components
+        self.repository = repository
+        self.on_experiment_saved = on_experiment_saved
+        self.on_save_error = on_save_error
 
         # Configuración física activa por defecto
         self.track = TrackConfig(x_min=-50.0, x_max=50.0)
@@ -41,6 +57,10 @@ class SimulationController:
         self._fps_delay_ms = 25  # ~40 FPS para fluidez visual
         self._last_plot_update_time = 0.0
         self._plot_update_interval = 0.08  # Actualizar gráficas cada 80 ms para eficiencia
+
+        # Control de persistencia y deduplicación automática
+        self._is_recorded: bool = False
+        self._experiment_started_at: Optional[str] = None
 
     @property
     def status(self) -> ExperimentStatus:
@@ -59,6 +79,8 @@ class SimulationController:
         if self.model.status != ExperimentStatus.READY:
             return
 
+        self._is_recorded = False
+        self._experiment_started_at = None
         self.track = track
         self.params = params
         self.model = ExperimentControllerModel(track, params)
@@ -81,6 +103,8 @@ class SimulationController:
         if self.model.status != ExperimentStatus.READY:
             return
 
+        self._is_recorded = False
+        self._experiment_started_at = datetime.datetime.now().isoformat()
         self.model.start()
         _, _, telemetry_panel, control_panel = self.get_ui_components()
         control_panel.set_simulation_state(self.model.status)
@@ -121,6 +145,9 @@ class SimulationController:
         self.model.stop(reason)
         self._update_views_sync(force_plot=True)
 
+        # Guardado automático transparente en el repositorio
+        self._save_experiment_if_completed()
+
         _, _, telemetry_panel, control_panel = self.get_ui_components()
         control_panel.set_simulation_state(self.model.status)
         telemetry_panel.set_status(self.model.status)
@@ -129,6 +156,8 @@ class SimulationController:
         """Reinicia el experimento al estado inicial con los parámetros vigentes."""
         self._cancel_scheduled_frame()
         self.model = ExperimentControllerModel(self.track, self.params)
+        self._is_recorded = False
+        self._experiment_started_at = None
 
         track_view, plots_view, telemetry_panel, control_panel = self.get_ui_components()
         control_panel.set_simulation_state(self.model.status)
@@ -175,6 +204,7 @@ class SimulationController:
         if self.model.status == ExperimentStatus.FINISHED:
             self._cancel_scheduled_frame()
             self._update_views_sync(force_plot=True)
+            self._save_experiment_if_completed()
             _, _, telemetry_panel, control_panel = self.get_ui_components()
             control_panel.set_simulation_state(self.model.status)
             telemetry_panel.set_status(self.model.status)
@@ -182,6 +212,48 @@ class SimulationController:
 
         # 4. Programar siguiente fotograma
         self._schedule_next_frame()
+
+    def _save_experiment_if_completed(self) -> Optional[ExperimentRecord]:
+        """
+        Guarda automáticamente el experimento completado si no ha sido registrado aún.
+        Previene duplicaciones y asegura integridad física antes de persistir.
+        """
+        if self._is_recorded:
+            return None
+
+        if self.repository is None:
+            return None
+
+        # Exigir al menos 2 muestras para considerar que hubo simulación real
+        if len(self.model.samples) < 2:
+            return None
+
+        self._is_recorded = True
+        now_iso = datetime.datetime.now().isoformat()
+        started_at = self._experiment_started_at or now_iso
+        completed_at = now_iso
+
+        summary = self.model.generate_summary()
+        try:
+            record = self.repository.record_completed_experiment(
+                summary=summary,
+                samples=self.model.samples,
+                track=self.track,
+                params=self.params,
+                started_at=started_at,
+                completed_at=completed_at,
+                physics_model=PhysicsModel.MRU,
+                data_source=DataSource.IDEAL_SIMULATION
+            )
+            if record and self.on_experiment_saved:
+                self.on_experiment_saved(record)
+            return record
+        except Exception as e:
+            if self.on_save_error:
+                self.on_save_error(e)
+            else:
+                print(f"[SimulationController] Error al guardar experimento automáticamente: {e}")
+            return None
 
     def _update_views_sync(self, force_plot: bool = False) -> None:
         """Sincroniza los componentes visuales con el estado actual."""

@@ -81,7 +81,16 @@ El código sigue una estricta separación de responsabilidades basada en el patr
 
 ```
 ├── main.py                     # Punto de entrada de la aplicación
-├── requirements.txt            # Dependencias del proyecto
+├── requirements.txt            # Dependencias del proyecto (matplotlib, numpy, pandas)
+├── README_dataset.md           # Diccionario de datos y guía de ML para el dataset
+├── data/                       # Almacenamiento persistente local de experimentos y sesiones
+│   ├── active_session.json     # Puntero a la sesión experimental activa
+│   └── sessions/               # Carpetas particionadas por sesión
+│       └── session_<id>/       # Subdirectorio por cada sesión
+│           ├── session.json    # Metadatos del ciclo de vida de la sesión
+│           ├── experiments.csv # Tabla maestra (1 fila por experimento completado)
+│           ├── observations.csv# Series temporales de telemetría (1 fila por muestra)
+│           └── manifest.json   # Manifiesto analítico con conteos y distribuciones
 ├── src/
 │   ├── models/                 # Capa de Dominio y Lógica Pura (Sin dependencias GUI)
 │   │   ├── physics.py          # Ecuaciones cinemáticas, límites, validaciones
@@ -91,18 +100,24 @@ El código sigue una estricta separación de responsabilidades basada en el patr
 │   │   ├── track_view.py       # Canvas interactivo: pista, regla, origen, vector, vehículo
 │   │   ├── telemetry_panel.py  # Tarjetas métricas digitales en tiempo real
 │   │   ├── plots_view.py       # Gráficas Matplotlib x-t y v-t sincronizadas
-│   │   ├── control_panel.py    # Controles de mando, presets y validación de entradas
-│   │   ├── dialogs.py          # Modales de informe científico y guía teórica
-│   │   └── main_window.py      # Ventana principal e integración de componentes
+│   │   ├── control_panel.py    # Configuración, controles y gestión de datasets
+│   │   ├── dialogs.py          # Modales: informe científico, guía teórica y gestor de sesiones
+│   │   ├── detailed_plot_viewer.py # Visor de plano cartesiano de alta resolución
+│   │   └── main_window.py      # Ventana principal, barra de estado y orquestación
 │   ├── controllers/            # Capa de Coordinación (Controlador)
-│   │   └── simulation_controller.py # Bucle de animación (~40 FPS) y sincronización
-│   └── data/                   # Capa de Persistencia y Exportación
-│       └── exporter.py         # Generador de reportes CSV con metadatos del SI
-└── tests/                      # Banco de Pruebas Unitarias y de Integración
+│   │   └── simulation_controller.py # Bucle de animación (~40 FPS) y auto-guardado seguro
+│   └── data/                   # Capa de Persistencia, Datasets y Machine Learning
+│       ├── schema.py           # Esquema relacional, PhysicsModel, DataSource y columnas SI
+│       ├── repository.py       # Repositorio local, ciclo de vida de sesiones y validación
+│       ├── consolidator.py     # Exportador de datasets (sesión e historial completo para ML)
+│       ├── migrator.py         # Migración y compatibilidad con informes antiguos
+│       └── exporter.py         # Generador de reportes individuales tradicionales
+└── tests/                      # Banco de Pruebas Unitarias y de Integración (34 pruebas)
     ├── test_physics.py         # Pruebas del modelo analítico de MRU
     ├── test_state_machine.py   # Pruebas de cronómetros, pausas y transiciones
-    ├── test_exporter.py        # Pruebas de exportación a CSV
-    └── test_gui_integration.py # Pruebas de interfaz, eventos y diálogos
+    ├── test_exporter.py        # Pruebas de exportación individual a CSV
+    ├── test_dataset_system.py  # 15 pruebas obligatorias de datasets y persistencia
+    └── test_gui_integration.py # Pruebas de interfaz, eventos, diálogos y auto-guardado
 ```
 
 ### Principio de Rigor Temporal y Monotónico
@@ -207,15 +222,93 @@ Al presionar el botón **"🔍 Ampliar Gráfica"** (en la esquina de las gráfic
 - **Telemetría Dinámica con Mira Telescópica (Crosshair):** Al desplazar el ratón sobre la gráfica, se proyectan líneas guía y una barra digital superior muestra en tiempo real las coordenadas exactas $(t, x, v, \text{estado})$ de la muestra más cercana.
 - **Pestaña con Tabla de Puntos Notables:** Desglose cronológico de todos los eventos críticos del experimento (inicio, pausas, reanudaciones y parada final).
 
-### 6.7. Exportación a CSV e Informe Científico
-- El botón **"Ver Informe Científico"** despliega un resumen completo con tabla comparativa de magnitudes, verificación del modelo MRU y comentarios pedagógicos.
-- El botón **"Exportar Datos a CSV"** guarda un archivo con las muestras reales registradas durante la simulación con metadatos científicos e intervalos de tiempo.
+### 6.7. Registro Científico y Datasets para IA / Machine Learning
+- **Auto-guardado Transparente:** Cada simulación finalizada (por detención del usuario o colisión en bordes) se valida físicamente y se guarda de inmediato en la sesión activa en disco local sin requerir que el usuario pulse exportar tras cada simulacro.
+- **Barra de Estado Inferior:** Muestra permanentemente la sesión activa, el conteo de experimentos acumulados y el estado del guardado automático en tiempo real.
+- **Botón "📦 Exportar Dataset de Sesión" (o atajo Ctrl+E):** Exporta el paquete científico consolidado de la sesión seleccionada (`experiments.csv`, `observations.csv`, `manifest.json`, `README_dataset.md`) al directorio que elija el usuario.
+- **Botón "🌐 Exportar Historial Completo":** Consolida todas las sesiones experimentales históricas en un único dataset global unificado.
+- **Gestor de Sesiones ("📑 Sesiones"):** Permite conmutar entre sesiones existentes, retomar sesiones anteriores y crear nuevas sesiones experimentales con notas descriptivas.
+- **Migración de Informes Legados ("🔄 Migrar Informe..."):** Importa informes CSV antiguos sin alterar los archivos fuente originales y evitando duplicaciones por cálculo de hash SHA-256.
+- **Exportación Individual Tradicional:** Se conserva el botón **"💾 Exportar Datos a CSV"** para generar reportes individuales aislados con cabeceras comentadas `#` cuando sea requerido.
 
 ---
 
-## 7. Pruebas Automatizadas y Verificación
+## 7. Sistema de Registro Científico y Datasets para Machine Learning
 
-El proyecto cuenta con una suite completa de pruebas unitarias y de integración que verifican la exactitud matemática y temporal:
+### 7.1. Estructura de Almacenamiento Persistente
+Los datos se almacenan en la carpeta `data/` estructurados por sesiones experimentales:
+
+```
+data/
+├── active_session.json            # Guarda {"session_id": "...", "updated_at": "..."}
+└── sessions/
+    └── session_<session_id>/
+        ├── session.json           # Metadatos del ciclo de vida de la sesión
+        ├── experiments.csv        # Tabla maestra (1 fila por experimento completado)
+        ├── observations.csv       # Telemetría continua (1 fila por muestra temporal)
+        └── manifest.json          # Manifiesto analítico con esquema y distribución de clases
+```
+
+### 7.2. Catálogo Extensible de Modelos Físicos (`physics_model`)
+El etiquetado supervisado proviene de la configuración real del simulador cinemático (verdad fundamental / ground truth):
+- `MRU`: Movimiento Rectilíneo Uniforme ($x(t) = x_0 + v \cdot t_{\text{eff}}$).
+- `MRUA`: Movimiento Rectilíneo Uniformemente Acelerado.
+- `MRUR`: Movimiento Rectilíneo Uniformemente Retardado.
+- `CAIDA_LIBRE`: Caída libre bajo aceleración gravitatoria constante.
+- `MOVIMIENTO_PERSONALIZADO`: Modelo cinemático definido por el usuario.
+- `UNKNOWN`: Modelo no identificado o no disponible.
+
+### 7.3. Esquema Relacional de Datasets (v1.0.0)
+
+#### Tabla Maestra: `experiments.csv`
+Una fila por cada experimento completado. Unidades SI en el encabezado:
+- **Identificación:** `experiment_id`, `session_id`, `experiment_number`, `physics_model`, `physics_model_version`, `software_version`, `experiment_status`, `data_source`.
+- **Configuración:** `initial_position_m`, `track_min_m`, `track_max_m`, `configured_velocity_m_s`, `configured_acceleration_m_s2`, `configured_duration_s`, `random_seed`.
+- **Resultados:** `final_position_m`, `displacement_m`, `distance_traveled_m`, `active_duration_s`, `wall_duration_s`, `pause_count`, `total_pause_duration_s`, `mean_velocity_active_m_s`, `mean_speed_active_m_s`, `mean_velocity_wall_m_s`, `mean_speed_wall_m_s`, `termination_reason`, `started_at`, `completed_at`.
+
+#### Tabla de Series Temporales: `observations.csv`
+Una fila por cada muestra de telemetría registrada:
+- `experiment_id`, `session_id`, `sample_index`, `wall_time_s`, `active_time_s`, `position_m`, `displacement_m`, `distance_traveled_m`, `velocity_m_s`, `speed_m_s`, `acceleration_m_s2`, `simulation_state`, `physics_model`.
+
+### 7.4. Carga Directa en Python y Pandas
+
+Los archivos CSV carecen de preámbulos decorativos y pueden leerse directamente en pandas:
+
+```python
+import pandas as pd
+
+# 1. Cargar tabla maestra de experimentos
+df_experiments = pd.read_csv("experiments.csv")
+print("Total experimentos:", len(df_experiments))
+print(df_experiments[["experiment_id", "physics_model", "configured_velocity_m_s"]].head())
+
+# 2. Cargar tabla de observaciones temporales
+df_observations = pd.read_csv("observations.csv")
+print("Total muestras telemétricas:", len(df_observations))
+
+# 3. Merge relacional entre ambas tablas
+df_dataset = df_observations.merge(
+    df_experiments[["experiment_id", "physics_model", "configured_velocity_m_s"]],
+    on="experiment_id",
+    how="left"
+)
+print(df_dataset.head())
+```
+
+### 7.5. Prevención Rigurosa de Fuga de Información (Data Leakage)
+> [!WARNING] Reglas Obligatorias para Modelos de Machine Learning
+> 1. **Partición por Experimento (`GroupKFold` / `GroupShuffleSplit`):**  
+>    **Nunca** use `train_test_split(df_observations)` fila a fila de forma puramente aleatoria. Las muestras temporales de un mismo simulacro están correlacionadas. Agrupe siempre por `groups=df_observations["experiment_id"]`.
+> 2. **Partición por Sesión:**  
+>    Para verificar que el modelo generalice ante distintas condiciones de experimentación, particione por `session_id`.
+> 3. **Procedencia de Datos:**  
+>    Utilice la columna `data_source` (`IDEAL_SIMULATION`, `SIMULATION_WITH_NOISE`, `REAL_MEASUREMENT`, `IMPORTED_LEGACY`) para evaluar robustez ante ruido o distribuciones fuera de dominio.
+
+---
+
+## 8. Pruebas Automatizadas y Verificación
+
+El proyecto cuenta con una suite completa de **34 pruebas automatizadas** que validan la física, la máquina de estados, el exportador, la integración GUI y la infraestructura científica de datos para ML:
 
 ```bash
 python3 -m unittest discover tests -v
@@ -235,30 +328,38 @@ test_pause_and_resume_cycles (test_state_machine.TestExperimentStateMachine) ...
 test_stop_and_summary_generation (test_state_machine.TestExperimentStateMachine) ... ok
 test_automatic_boundary_termination (test_state_machine.TestExperimentStateMachine) ... ok
 test_csv_generation_and_export (test_exporter.TestExporter) ... ok
+test_01_auto_save_completed_experiment (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_02_accumulation_of_experiments_without_overwriting (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_03_persistence_across_app_restart (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_04_session_association (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_05_unique_identifiers (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_06_deduplication (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_07_session_dataset_export (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_08_historical_dataset_export (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_09_direct_pandas_read (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_10_headers_and_data_types_integrity (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_11_missing_values_representation (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_12_legacy_report_migration (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_13_physical_consistency_validation (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_14_experiment_status_and_filtering (test_dataset_system.TestScientificDatasetSystem) ... ok
+test_15_resilience_to_damaged_or_missing_files (test_dataset_system.TestScientificDatasetSystem) ... ok
 test_initial_gui_state (test_gui_integration.TestGUIIntegration) ... ok
 test_start_pause_resume_reset_cycle (test_gui_integration.TestGUIIntegration) ... ok
 test_preset_selection (test_gui_integration.TestGUIIntegration) ... ok
 test_dialog_creations (test_gui_integration.TestGUIIntegration) ... ok
+test_detailed_plot_viewer_features (test_gui_integration.TestGUIIntegration) ... ok
+test_auto_save_integration_in_gui (test_gui_integration.TestGUIIntegration) ... ok
+test_session_manager_dialog_integration (test_gui_integration.TestGUIIntegration) ... ok
 
 ----------------------------------------------------------------------
-Ran 16 tests in 8.173s
+Ran 34 tests in 20.529s
 
 OK
 ```
 
-### Escenarios Críticos Verificados:
-1. **Velocidad Positiva:** Desplazamiento correcto hacia la derecha respetando la ecuación horaria.
-2. **Velocidad Negativa:** Desplazamiento hacia la izquierda con signo negativo en $\Delta x$ y distancia positiva $d$.
-3. **Velocidad Nula ($v = 0$):** Vehículo en reposo estricto, sin avance ni deriva.
-4. **Pausa Determinista:** El tiempo efectivo se congela completamente mientras el tiempo de pared avanza. Al reanudar no existen discontinuidades.
-5. **Detección de Límite sin Desbordamiento:** Detención exacta al alcanzar $x_{\min}$ o $x_{\max}$ sin traspasar la pista ni alterar la velocidad configurada.
-6. **Validación de Entradas:** Rechazo de configuraciones con $x_0$ fuera de pista o sentidos que colisionen inmediatamente.
-7. **Exportador CSV:** Registro verificado de cabeceras de metadatos, columnas SI y datos numéricos empíricos.
-8. **Integración GUI:** Apertura de ventanas modales, enlace de eventos de teclado y ciclos completos de vida de simulación.
-
 ---
 
-## 8. Licencia y Créditos
+## 9. Licencia y Créditos
 
-Proyecto desarrollado con fines académicos y de divulgación científica para cursos de **Física General** y **Simulación Numérica** en programas de **Ingeniería de Sistemas**.
+Proyecto desarrollado con fines académicos y de divulgación científica para cursos de **Física General**, **Simulación Numérica** e **Inteligencia Artificial y Machine Learning** en programas de **Ingeniería de Sistemas**.
 Uso libre para docencia, aprendizaje e investigación.

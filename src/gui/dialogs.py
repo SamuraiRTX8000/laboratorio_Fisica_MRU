@@ -9,8 +9,8 @@ Proporciona ventanas modales diseñadas para la docencia universitaria:
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from typing import Optional, Callable
+from tkinter import ttk, filedialog, messagebox, simpledialog
+from typing import Optional, Callable, Dict, Any, List
 from .theme import Theme
 from ..models.experiment_state import ExperimentSummary, MeasurementSample
 from ..models.physics import TrackConfig, MRUParameters
@@ -489,3 +489,215 @@ class TheoryGuideDialog(tk.Toplevel):
             fg=Theme.TEXT_MUTED,
             font=(Theme.FONT_FAMILY, 8, "italic")
         ).pack(anchor="center", pady=(2, 0))
+
+
+class SessionManagerDialog(tk.Toplevel):
+    """
+    Diálogo para gestionar, visualizar y conmutar sesiones experimentales almacenadas.
+    Permite retomar sesiones previas, consultar historial y crear nuevas sesiones.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        repository,
+        on_session_switched: Optional[Callable[[Any], None]] = None,
+        on_export_session_callback: Optional[Callable[[str], None]] = None
+    ) -> None:
+        super().__init__(parent)
+        self.repository = repository
+        self.on_session_switched = on_session_switched
+        self.on_export_session_callback = on_export_session_callback
+
+        self.title("Gestor de Sesiones Experimentales Científicas")
+        self.geometry("800x480")
+        self.minsize(680, 380)
+        self.configure(bg=Theme.BG_DARK)
+        self.transient(parent)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+
+        self._build_ui()
+        self._load_sessions_list()
+
+    def _build_ui(self) -> None:
+        """Construye los componentes de la interfaz de sesiones."""
+        # Encabezado
+        header = tk.Frame(self, bg=Theme.BG_CARD, padx=16, pady=12)
+        header.pack(fill=tk.X)
+
+        tk.Label(
+            header,
+            text="HISTORIAL Y GESTIÓN DE SESIONES EXPERIMENTALES",
+            bg=Theme.BG_CARD,
+            fg=Theme.PRIMARY,
+            font=(Theme.FONT_FAMILY, 12, "bold")
+        ).pack(anchor="w")
+
+        self.lbl_active_info = tk.Label(
+            header,
+            text=f"Sesión Activa Actual: {self.repository.active_session.session_id}",
+            bg=Theme.BG_CARD,
+            fg=Theme.SUCCESS,
+            font=(Theme.FONT_FAMILY, 9, "bold")
+        )
+        self.lbl_active_info.pack(anchor="w", pady=(2, 0))
+
+        # Contenedor central con tabla Treeview
+        tree_frame = tk.Frame(self, bg=Theme.BG_DARK, padx=16, pady=10)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        columns = ("session_id", "status", "started_at", "exp_count", "obs_count", "notes")
+        self.tree = ttk.Treeview(
+            tree_frame,
+            columns=columns,
+            show="headings",
+            selectmode="browse"
+        )
+
+        self.tree.heading("session_id", text="ID de Sesión")
+        self.tree.heading("status", text="Estado")
+        self.tree.heading("started_at", text="Fecha de Inicio")
+        self.tree.heading("exp_count", text="Experimentos")
+        self.tree.heading("obs_count", text="Observaciones")
+        self.tree.heading("notes", text="Notas")
+
+        self.tree.column("session_id", width=180, anchor="w")
+        self.tree.column("status", width=90, anchor="center")
+        self.tree.column("started_at", width=140, anchor="center")
+        self.tree.column("exp_count", width=90, anchor="center")
+        self.tree.column("obs_count", width=100, anchor="center")
+        self.tree.column("notes", width=160, anchor="w")
+
+        scrollbar_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar_y.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Botonera inferior
+        btn_bar = tk.Frame(self, bg=Theme.BG_CARD, padx=16, pady=10)
+        btn_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
+        btn_activate = ttk.Button(
+            btn_bar,
+            text="✓ Retomar / Activar Sesión",
+            style="Primary.TButton",
+            command=self._on_activate_selected
+        )
+        btn_activate.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_export = ttk.Button(
+            btn_bar,
+            text="📦 Exportar Dataset de Esta Sesión",
+            style="Secondary.TButton",
+            command=self._on_export_selected
+        )
+        btn_export.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_new = ttk.Button(
+            btn_bar,
+            text="➕ Iniciar Nueva Sesión",
+            style="Success.TButton",
+            command=self._on_create_new_session
+        )
+        btn_new.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_close = ttk.Button(
+            btn_bar,
+            text="Cerrar",
+            style="Secondary.TButton",
+            command=self.destroy
+        )
+        btn_close.pack(side=tk.RIGHT)
+
+    def _load_sessions_list(self) -> None:
+        """Carga y visualiza todas las sesiones en el Treeview."""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        sessions = self.repository.list_all_sessions()
+        active_id = self.repository.active_session.session_id
+
+        for s_id in reversed(sessions):
+            meta = self.repository.get_session_metadata(s_id)
+            if not meta:
+                continue
+
+            sess_info = meta.get("session", {})
+            is_active = (s_id == active_id)
+            status_str = "● ACTIVA" if is_active else "Archivada"
+            started_raw = sess_info.get("session_started_at", "")
+            started_clean = started_raw[:19].replace("T", " ") if started_raw else "—"
+            exp_c = meta.get("experiment_count", 0)
+            obs_c = meta.get("observation_count", 0)
+            notes_str = sess_info.get("notes", "")
+
+            item_id = self.tree.insert(
+                "",
+                "end",
+                values=(s_id, status_str, started_clean, exp_c, obs_c, notes_str)
+            )
+            if is_active:
+                self.tree.selection_set(item_id)
+
+    def _on_activate_selected(self) -> None:
+        """Cambia la sesión activa a la seleccionada en la tabla."""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showinfo("Aviso", "Seleccione una sesión de la lista para activar.", parent=self)
+            return
+
+        values = self.tree.item(selected[0], "values")
+        sess_id = values[0]
+        if sess_id == self.repository.active_session.session_id:
+            messagebox.showinfo("Información", f"La sesión {sess_id} ya es la sesión activa actual.", parent=self)
+            return
+
+        try:
+            sess = self.repository.switch_to_session(sess_id)
+            self.lbl_active_info.config(text=f"Sesión Activa Actual: {sess.session_id}")
+            self._load_sessions_list()
+            if self.on_session_switched:
+                self.on_session_switched(sess)
+            messagebox.showinfo(
+                "Sesión Activada",
+                f"Se ha retomado exitosamente la sesión:\n{sess_id}\n\n"
+                f"Experimentos registrados: {sess.experiment_count}\n"
+                f"Observaciones acumuladas: {sess.observation_count}",
+                parent=self
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo cambiar de sesión:\n{str(e)}", parent=self)
+
+    def _on_export_selected(self) -> None:
+        """Dispara la exportación de la sesión seleccionada."""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showinfo("Aviso", "Seleccione una sesión para exportar.", parent=self)
+            return
+        values = self.tree.item(selected[0], "values")
+        sess_id = values[0]
+        if self.on_export_session_callback:
+            self.on_export_session_callback(sess_id)
+
+    def _on_create_new_session(self) -> None:
+        """Crea una nueva sesión solicitando notas opcionales."""
+        notes = simpledialog.askstring(
+            "Nueva Sesión Experimental",
+            "Ingrese una descripción o notas para la nueva sesión (opcional):",
+            parent=self
+        )
+        if notes is not None:
+            sess = self.repository.create_new_session(notes=notes)
+            self.lbl_active_info.config(text=f"Sesión Activa Actual: {sess.session_id}")
+            self._load_sessions_list()
+            if self.on_session_switched:
+                self.on_session_switched(sess)
+            messagebox.showinfo(
+                "Nueva Sesión Creada",
+                f"Se ha iniciado la nueva sesión:\n{sess.session_id}",
+                parent=self
+            )

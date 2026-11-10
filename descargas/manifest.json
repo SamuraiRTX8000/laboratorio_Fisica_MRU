@@ -1,0 +1,74 @@
+{
+  "dataset_schema_version": "1.0.0",
+  "software_version": "1.0.0",
+  "scope": "SESSION",
+  "session_id": "sess_20261023_192555_f09220",
+  "exported_at": "2026-11-07T21:43:09.119422",
+  "total_experiments": 13,
+  "total_observations": 238,
+  "distributions": {
+    "physics_models": {
+      "MRU": 13
+    },
+    "experiment_statuses": {
+      "COMPLETED": 13
+    },
+    "data_sources": {
+      "IDEAL_SIMULATION": 13
+    }
+  },
+  "schema_columns": {
+    "experiments": [
+      "experiment_id",
+      "session_id",
+      "experiment_number",
+      "physics_model",
+      "physics_model_version",
+      "software_version",
+      "experiment_status",
+      "data_source",
+      "initial_position_m",
+      "track_min_m",
+      "track_max_m",
+      "configured_velocity_m_s",
+      "configured_acceleration_m_s2",
+      "configured_duration_s",
+      "random_seed",
+      "final_position_m",
+      "displacement_m",
+      "distance_traveled_m",
+      "active_duration_s",
+      "wall_duration_s",
+      "pause_count",
+      "total_pause_duration_s",
+      "mean_velocity_active_m_s",
+      "mean_speed_active_m_s",
+      "mean_velocity_wall_m_s",
+      "mean_speed_wall_m_s",
+      "termination_reason",
+      "started_at",
+      "completed_at"
+    ],
+    "observations": [
+      "experiment_id",
+      "session_id",
+      "sample_index",
+      "wall_time_s",
+      "active_time_s",
+      "position_m",
+      "displacement_m",
+      "distance_traveled_m",
+      "velocity_m_s",
+      "speed_m_s",
+      "acceleration_m_s2",
+      "simulation_state",
+      "physics_model"
+    ]
+  },
+  "files": {
+    "experiments_csv": "experiments.csv",
+    "observations_csv": "observations.csv",
+    "manifest_json": "manifest.json",
+    "documentation": "README_dataset.md"
+  }
+}

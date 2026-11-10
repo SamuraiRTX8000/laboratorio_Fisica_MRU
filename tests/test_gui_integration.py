@@ -4,19 +4,33 @@ Pruebas de Integración de la Interfaz Gráfica y el Controlador de Simulación.
 
 import unittest
 import tkinter as tk
+import tempfile
 import time
+from pathlib import Path
 from src.gui.main_window import MainWindow
 from src.models.experiment_state import ExperimentStatus
 from src.models.physics import TrackConfig, MRUParameters
+from src.data.repository import ExperimentRepository
+from src.data.consolidator import DatasetConsolidator
+from src.data.migrator import LegacyReportMigrator
+from src.gui.dialogs import SessionManagerDialog
 
 
 class TestGUIIntegration(unittest.TestCase):
     """Verifica la correcta integración de todos los componentes de la interfaz."""
 
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
         self.root = tk.Tk()
         self.root.withdraw()  # Ocultar para pruebas sin parpadeo
         self.app = MainWindow(self.root)
+
+        # Redirigir el repositorio de la aplicación a un directorio temporal aislado
+        self.app.repository = ExperimentRepository(base_dir=self.temp_dir.name)
+        self.app.consolidator = DatasetConsolidator(self.app.repository)
+        self.app.migrator = LegacyReportMigrator(self.app.repository)
+        self.app.controller.repository = self.app.repository
+        self.app._refresh_session_ui()
 
     def tearDown(self):
         if self.app and self.app.controller:
@@ -26,6 +40,7 @@ class TestGUIIntegration(unittest.TestCase):
         except Exception:
             pass
         self.root.destroy()
+        self.temp_dir.cleanup()
 
     def test_initial_gui_state(self):
         """Verifica que los componentes se inicialicen en estado READY."""
@@ -154,6 +169,59 @@ class TestGUIIntegration(unittest.TestCase):
         self.root.update()
 
         v.destroy()
+        self.root.update()
+
+    def test_auto_save_integration_in_gui(self):
+        """Verifica que un experimento iniciado y detenido en la GUI se guarde automáticamente en disco."""
+        initial_count = self.app.repository.active_session.experiment_count
+
+        # Iniciar simulación
+        self.app.control_panel.btn_start.invoke()
+        self.root.update()
+
+        # Dejar avanzar varias iteraciones para registrar muestras
+        for _ in range(8):
+            self.root.update()
+            time.sleep(0.01)
+
+        # Detener simulación
+        self.app.control_panel.btn_stop.invoke()
+        self.root.update()
+
+        # El contador debe haber aumentado exactamente en 1
+        self.assertEqual(self.app.repository.active_session.experiment_count, initial_count + 1)
+
+        # La barra de estado inferior debe mostrar el nuevo conteo y mensaje de éxito
+        self.assertIn(str(initial_count + 1), self.app.lbl_status_count.cget("text"))
+        self.assertIn("guardado automáticamente", self.app.lbl_status_save.cget("text"))
+
+        # Panel de control lateral también debe reflejar el conteo
+        self.assertIn(str(initial_count + 1), self.app.control_panel.lbl_dataset_count.cget("text"))
+
+        # El archivo experiments.csv debe existir físicamente
+        sess_dir = Path(self.temp_dir.name) / "sessions" / f"session_{self.app.repository.active_session.session_id}"
+        self.assertTrue((sess_dir / "experiments.csv").exists())
+
+    def test_session_manager_dialog_integration(self):
+        """Verifica que el diálogo de gestión de sesiones se cree y liste las sesiones correctamente."""
+        # Crear una segunda sesión
+        sess2 = self.app.repository.create_new_session(notes="Segunda sesión de prueba GUI")
+        self.app._refresh_session_ui()
+
+        # Abrir diálogo
+        dlg = SessionManagerDialog(
+            parent=self.root,
+            repository=self.app.repository,
+            on_session_switched=lambda s: self.app._refresh_session_ui(),
+            on_export_session_callback=self.app.show_export_session_dataset_dialog
+        )
+        self.root.update()
+
+        # Debe contener al menos 2 sesiones en el treeview
+        items = dlg.tree.get_children()
+        self.assertGreaterEqual(len(items), 2)
+
+        dlg.destroy()
         self.root.update()
 
 

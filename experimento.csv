@@ -1,0 +1,46 @@
+# ====================================================================
+# LABORATORIO VIRTUAL DE CINEMÁTICA - MOVIMIENTO RECTILÍNEO UNIFORME
+# METADATOS EXPERIMENTALES REGISTRADOS
+# ====================================================================
+# Fecha de registro: 2026-10-23 19:41:23
+# Limites de la pista: [-50.00 m, 50.00 m] (Longitud: 100.00 m)
+# Posicion inicial (x0): 0.0000 m
+# Velocidad configurada (v): 10.0000 m/s
+# Rapidez configurada (|v|): 10.0000 m/s
+# Tiempo efectivo de movimiento: 5.0000 s
+# Tiempo total del experimento: 5.2092 s
+# Numero de pausas: 0
+# Tiempo total en pausa: 0.0000 s
+# Posicion final: 50.0000 m
+# Desplazamiento final (Delta x): 50.0000 m
+# Distancia final recorrida (d): 50.0000 m
+# Velocidad media efectiva: 10.0000 m/s
+# Rapidez media efectiva: 10.0000 m/s
+# Velocidad media global: 9.5985 m/s
+# Rapidez media global: 9.5985 m/s
+# Razon de finalizacion: Alcanzó el límite superior x_max = 50.00 m.
+# MRU Verificado en intervalos de movimiento: SI
+# ====================================================================
+# DATOS TELEMETRICOS DE LA SIMULACION (MUESTRAS REALES)
+# ====================================================================
+Muestra,Tiempo_Total_s,Tiempo_Efectivo_s,Posicion_m,Desplazamiento_m,Distancia_Recorrida_m,Velocidad_Instantanea_m_s,Rapidez_Instantanea_m_s,Estado_Simulacion
+0,0.0000,0.0000,0.0000,0.0000,0.0000,10.0000,10.0000,PREPARADO
+1,0.0000,0.0000,0.0000,0.0000,0.0000,10.0000,10.0000,EN MOVIMIENTO
+2,0.0325,0.0325,0.3247,0.3247,0.3247,10.0000,10.0000,EN MOVIMIENTO
+3,0.5156,0.5156,5.1559,5.1559,5.1559,10.0000,10.0000,EN MOVIMIENTO
+4,0.8570,0.8570,8.5701,8.5701,8.5701,10.0000,10.0000,EN MOVIMIENTO
+5,1.1486,1.1486,11.4857,11.4857,11.4857,10.0000,10.0000,EN MOVIMIENTO
+6,1.4687,1.4687,14.6871,14.6871,14.6871,10.0000,10.0000,EN MOVIMIENTO
+7,1.7678,1.7678,17.6778,17.6778,17.6778,10.0000,10.0000,EN MOVIMIENTO
+8,2.0565,2.0565,20.5653,20.5653,20.5653,10.0000,10.0000,EN MOVIMIENTO
+9,2.3526,2.3526,23.5257,23.5257,23.5257,10.0000,10.0000,EN MOVIMIENTO
+10,2.6231,2.6231,26.2314,26.2314,26.2314,10.0000,10.0000,EN MOVIMIENTO
+11,2.9218,2.9218,29.2179,29.2179,29.2179,10.0000,10.0000,EN MOVIMIENTO
+12,3.2385,3.2385,32.3846,32.3846,32.3846,10.0000,10.0000,EN MOVIMIENTO
+13,3.5123,3.5123,35.1226,35.1226,35.1226,10.0000,10.0000,EN MOVIMIENTO
+14,3.7980,3.7980,37.9800,37.9800,37.9800,10.0000,10.0000,EN MOVIMIENTO
+15,4.0838,4.0838,40.8378,40.8378,40.8378,10.0000,10.0000,EN MOVIMIENTO
+16,4.3834,4.3834,43.8336,43.8336,43.8336,10.0000,10.0000,EN MOVIMIENTO
+17,4.6629,4.6629,46.6287,46.6287,46.6287,10.0000,10.0000,EN MOVIMIENTO
+18,4.9230,4.9230,49.2297,49.2297,49.2297,10.0000,10.0000,EN MOVIMIENTO
+19,5.2092,5.0000,50.0000,50.0000,50.0000,0.0000,0.0000,FINALIZADO

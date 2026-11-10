@@ -1,0 +1,22 @@
+{
+  "dataset_schema_version": "1.0.0",
+  "software_version": "1.0.0",
+  "session_id": "sess_20261023_192555_f09220",
+  "manifest_generated_at": "2026-11-07T21:41:02.686796",
+  "session_started_at": "2026-10-23T19:25:55.881927",
+  "session_ended_at": null,
+  "experiment_count": 13,
+  "observation_count": 238,
+  "physics_models_distribution": {
+    "MRU": 13
+  },
+  "experiment_statuses_distribution": {
+    "COMPLETED": 13
+  },
+  "notes": "",
+  "files": {
+    "experiments_csv": "experiments.csv",
+    "observations_csv": "observations.csv",
+    "session_json": "session.json"
+  }
+}

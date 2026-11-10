@@ -33,6 +33,10 @@ class ControlPanel(tk.Frame):
         on_export_csv: Callable[[], None],
         on_show_theory: Callable[[], None],
         on_expand_plot: Optional[Callable[[], None]] = None,
+        on_export_session_dataset: Optional[Callable[[], None]] = None,
+        on_export_historical_dataset: Optional[Callable[[], None]] = None,
+        on_manage_sessions: Optional[Callable[[], None]] = None,
+        on_new_session: Optional[Callable[[], None]] = None,
         **kwargs
     ) -> None:
         super().__init__(parent, bg=Theme.BG_CARD, padx=12, pady=12, **kwargs)
@@ -47,6 +51,10 @@ class ControlPanel(tk.Frame):
         self.on_export_csv = on_export_csv
         self.on_show_theory = on_show_theory
         self.on_expand_plot = on_expand_plot
+        self.on_export_session_dataset = on_export_session_dataset
+        self.on_export_historical_dataset = on_export_historical_dataset
+        self.on_manage_sessions = on_manage_sessions
+        self.on_new_session = on_new_session
 
         # Variables de control
         self.preset_var = tk.StringVar(value="Personalizado")
@@ -366,6 +374,99 @@ class ControlPanel(tk.Frame):
             command=self.on_show_theory
         )
         self.btn_theory.pack(fill=tk.X, pady=2)
+
+        # --- SECCIÓN 5: GESTIÓN DE DATASETS CIENTÍFICOS (IA/ML) ---
+        sec_datasets = tk.LabelFrame(
+            self,
+            text=" 5. Datasets Científicos (IA/ML) ",
+            bg=Theme.BG_CARD,
+            fg=Theme.PRIMARY,
+            font=(Theme.FONT_FAMILY, 9, "bold"),
+            padx=8,
+            pady=6
+        )
+        sec_datasets.pack(fill=tk.X, pady=(10, 0))
+
+        # Indicador de sesión activa
+        self.lbl_dataset_session = tk.Label(
+            sec_datasets,
+            text="Sesión: Cargando...",
+            bg=Theme.BG_CARD,
+            fg=Theme.TEXT_MUTED,
+            font=(Theme.FONT_FAMILY, 8),
+            anchor="w"
+        )
+        self.lbl_dataset_session.pack(fill=tk.X)
+
+        # Contador de experimentos guardados
+        self.lbl_dataset_count = tk.Label(
+            sec_datasets,
+            text="Experimentos guardados: 0",
+            bg=Theme.BG_CARD,
+            fg=Theme.TEXT_LIGHT,
+            font=(Theme.FONT_FAMILY, 8, "bold"),
+            anchor="w"
+        )
+        self.lbl_dataset_count.pack(fill=tk.X)
+
+        # Indicador de estado de auto-guardado
+        self.lbl_dataset_status = tk.Label(
+            sec_datasets,
+            text="● Auto-guardado activo",
+            bg=Theme.BG_CARD,
+            fg=Theme.SUCCESS,
+            font=(Theme.FONT_FAMILY, 8),
+            anchor="w"
+        )
+        self.lbl_dataset_status.pack(fill=tk.X, pady=(1, 4))
+
+        # Botón Exportar Dataset de la Sesión
+        self.btn_export_session = ttk.Button(
+            sec_datasets,
+            text="📦  Exportar Dataset de Sesión",
+            style="Primary.TButton",
+            command=self.on_export_session_dataset if self.on_export_session_dataset else lambda: None
+        )
+        self.btn_export_session.pack(fill=tk.X, pady=2)
+
+        # Botón Exportar Historial Completo
+        self.btn_export_historical = ttk.Button(
+            sec_datasets,
+            text="🌐  Exportar Historial Completo",
+            style="Secondary.TButton",
+            command=self.on_export_historical_dataset if self.on_export_historical_dataset else lambda: None
+        )
+        self.btn_export_historical.pack(fill=tk.X, pady=2)
+
+        # Fila de gestión rápida de sesiones
+        frame_sess_ops = tk.Frame(sec_datasets, bg=Theme.BG_CARD)
+        frame_sess_ops.pack(fill=tk.X, pady=(2, 0))
+
+        btn_new_sess = ttk.Button(
+            frame_sess_ops,
+            text="➕ Nueva",
+            style="Secondary.TButton",
+            command=self.on_new_session if self.on_new_session else lambda: None
+        )
+        btn_new_sess.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+        btn_manage = ttk.Button(
+            frame_sess_ops,
+            text="📑 Sesiones",
+            style="Secondary.TButton",
+            command=self.on_manage_sessions if self.on_manage_sessions else lambda: None
+        )
+        btn_manage.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+
+    def update_session_display(self, session_id: str, count: int, status_msg: Optional[str] = None) -> None:
+        """Actualiza la visualización de la sesión activa y experimentos guardados."""
+        disp_id = session_id if len(session_id) <= 24 else session_id[:21] + "..."
+        self.lbl_dataset_session.config(text=f"Sesión: {disp_id}")
+        self.lbl_dataset_count.config(text=f"Experimentos guardados: {count}")
+        if status_msg:
+            self.lbl_dataset_status.config(text=status_msg, fg=Theme.SUCCESS)
+        else:
+            self.lbl_dataset_status.config(text="● Auto-guardado activo", fg=Theme.SUCCESS)
 
     def _on_preset_selected(self, event=None) -> None:
         """Aplica la configuración del preset didáctico seleccionado."""
