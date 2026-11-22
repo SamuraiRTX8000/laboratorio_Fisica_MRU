@@ -1,3 +1,11 @@
-from .simulation_controller import SimulationController
+from .simulation_controller import (
+    SimulationController,
+    MRUASimulationController,
+    FreeFallSimulationController
+)
 
-__all__ = ["SimulationController"]
+__all__ = [
+    "SimulationController",
+    "MRUASimulationController",
+    "FreeFallSimulationController"
+]

@@ -12,7 +12,7 @@ import csv
 import uuid
 import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple, Set
+from typing import Optional, List, Dict, Tuple, Set, Union
 
 from .schema import (
     DATASET_SCHEMA_VERSION,
@@ -27,7 +27,7 @@ from .schema import (
     OBSERVATIONS_CSV_COLUMNS
 )
 from ..models.experiment_state import ExperimentSummary, MeasurementSample
-from ..models.physics import TrackConfig, MRUParameters
+from ..models.physics import TrackConfig, MRUParameters, MRUAParameters, FreeFallParameters
 
 
 class ExperimentRepository:
@@ -218,8 +218,8 @@ class ExperimentRepository:
         self,
         summary: ExperimentSummary,
         samples: List[MeasurementSample],
-        track: TrackConfig,
-        params: MRUParameters,
+        track: Optional[TrackConfig],
+        params: Union[MRUParameters, MRUAParameters, FreeFallParameters],
         started_at: Optional[str] = None,
         completed_at: Optional[str] = None,
         physics_model: PhysicsModel = PhysicsModel.MRU,
@@ -262,9 +262,31 @@ class ExperimentRepository:
         start_iso = started_at or now_iso
         comp_iso = completed_at or now_iso
 
-        # 1. Crear el registro maestro de experimento
+        # 1. Crear el registro maestro de experimento adaptando los parámetros según el modelo
         v_wall = summary.v_avg_total if summary.t_total > 0 else None
         s_wall = summary.s_avg_total if summary.t_total > 0 else None
+
+        if isinstance(params, MRUAParameters):
+            init_pos = params.x0
+            conf_vel = params.v0
+            conf_acc = params.acceleration
+            track_min = track.x_min if track else -100.0
+            track_max = track.x_max if track else 100.0
+            conf_dur = params.configured_duration
+        elif isinstance(params, FreeFallParameters):
+            init_pos = params.y0
+            conf_vel = params.v0
+            conf_acc = -params.g
+            track_min = 0.0
+            track_max = getattr(track, "x_max", 1000.0) if track else 1000.0
+            conf_dur = params.configured_duration
+        else:
+            init_pos = params.x0
+            conf_vel = params.velocity
+            conf_acc = None
+            track_min = track.x_min if track else -50.0
+            track_max = track.x_max if track else 50.0
+            conf_dur = None
 
         record = ExperimentRecord(
             experiment_id=exp_id,
@@ -275,12 +297,12 @@ class ExperimentRepository:
             software_version=SOFTWARE_VERSION,
             experiment_status="COMPLETED",
             data_source=data_source.value,
-            initial_position_m=round(params.x0, 6),
-            track_min_m=round(track.x_min, 6),
-            track_max_m=round(track.x_max, 6),
-            configured_velocity_m_s=round(params.velocity, 6),
-            configured_acceleration_m_s2=None,  # No aplica en MRU (campo vacío)
-            configured_duration_s=None,
+            initial_position_m=round(init_pos, 6),
+            track_min_m=round(track_min, 6),
+            track_max_m=round(track_max, 6),
+            configured_velocity_m_s=round(conf_vel, 6),
+            configured_acceleration_m_s2=round(conf_acc, 6) if conf_acc is not None else None,
+            configured_duration_s=round(conf_dur, 6) if conf_dur is not None else None,
             random_seed=None,
             final_position_m=round(summary.x_final, 6),
             displacement_m=round(summary.displacement, 6),
@@ -304,6 +326,7 @@ class ExperimentRepository:
         # 2. Convertir muestras a ObservationRecords
         observation_records: List[ObservationRecord] = []
         for idx, s in enumerate(samples):
+            obs_acc = round(s.acceleration, 6) if (physics_model != PhysicsModel.MRU and hasattr(s, "acceleration")) else None
             obs = ObservationRecord(
                 experiment_id=exp_id,
                 session_id=self.active_session.session_id,
@@ -317,7 +340,7 @@ class ExperimentRepository:
                 speed_m_s=round(s.speed, 6),
                 simulation_state=s.status,
                 physics_model=physics_model.value,
-                acceleration_m_s2=None  # Campo ausente para MRU
+                acceleration_m_s2=obs_acc
             )
             observation_records.append(obs)
 
@@ -375,6 +398,24 @@ class ExperimentRepository:
                     f"Incoherencia física con MRU: desplazamiento {record.displacement_m:.4f}m "
                     f"difiere del analítico {expected_mru_disp:.4f}m (v={record.configured_velocity_m_s}, t_eff={record.active_duration_s})"
                 )
+        # Coherencia con MRUA: Delta x = v0*t + 0.5*a*t² (si no se detuvo por límite o duración externa)
+        elif record.physics_model == PhysicsModel.MRUA.value and record.active_duration_s > 0.05:
+            if record.configured_acceleration_m_s2 is not None and "límite" not in record.termination_reason.lower():
+                expected_mrua_disp = (record.configured_velocity_m_s * record.active_duration_s) + (0.5 * record.configured_acceleration_m_s2 * (record.active_duration_s ** 2))
+                if abs(record.displacement_m - expected_mrua_disp) > 0.25:
+                    raise ValueError(
+                        f"Incoherencia física con MRUA: desplazamiento {record.displacement_m:.4f}m "
+                        f"difiere del analítico {expected_mrua_disp:.4f}m (v0={record.configured_velocity_m_s}, a={record.configured_acceleration_m_s2}, t={record.active_duration_s})"
+                    )
+        # Coherencia con Caída Libre: Delta y = v0*t + 0.5*a*t²
+        elif record.physics_model == PhysicsModel.CAIDA_LIBRE.value and record.active_duration_s > 0.05:
+            if record.configured_acceleration_m_s2 is not None and "impactó" not in record.termination_reason.lower():
+                expected_ff_disp = (record.configured_velocity_m_s * record.active_duration_s) + (0.5 * record.configured_acceleration_m_s2 * (record.active_duration_s ** 2))
+                if abs(record.displacement_m - expected_ff_disp) > 0.25:
+                    raise ValueError(
+                        f"Incoherencia física con Caída Libre: desplazamiento {record.displacement_m:.4f}m "
+                        f"difiere del analítico {expected_ff_disp:.4f}m"
+                    )
 
     def switch_to_session(self, session_id: str) -> SessionMetadata:
         """Cambia la sesión activa a una sesión previamente existente."""

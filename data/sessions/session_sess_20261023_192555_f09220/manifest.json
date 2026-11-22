@@ -2,16 +2,17 @@
   "dataset_schema_version": "1.0.0",
   "software_version": "1.0.0",
   "session_id": "sess_20261023_192555_f09220",
-  "manifest_generated_at": "2026-11-07T21:41:02.686796",
+  "manifest_generated_at": "2026-11-19T18:37:23.070131",
   "session_started_at": "2026-10-23T19:25:55.881927",
   "session_ended_at": null,
-  "experiment_count": 13,
-  "observation_count": 238,
+  "experiment_count": 15,
+  "observation_count": 306,
   "physics_models_distribution": {
-    "MRU": 13
+    "MRU": 14,
+    "MRUA": 1
   },
   "experiment_statuses_distribution": {
-    "COMPLETED": 13
+    "COMPLETED": 15
   },
   "notes": "",
   "files": {

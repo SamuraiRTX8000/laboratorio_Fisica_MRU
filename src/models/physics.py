@@ -72,13 +72,14 @@ class MRUParameters:
 class PhysicalState:
     """Estado instantáneo calculado del cuerpo según las ecuaciones cinemáticas."""
     t_eff: float            # Tiempo efectivo de movimiento (s)
-    position: float         # Posición actual x(t) (m)
+    position: float         # Posición actual x(t) o y(t) (m)
     displacement: float     # Desplazamiento Delta x = x(t) - x0 (m)
     distance: float         # Distancia total recorrida d (m)
     velocity: float         # Velocidad vectorial instantánea (m/s)
     speed: float            # Rapidez instantánea (m/s)
-    reached_boundary: bool  # Indica si alcanzó el final de la pista
-    boundary_name: Optional[str] = None  # "x_max", "x_min" o None
+    reached_boundary: bool  # Indica si alcanzó el final de la pista o suelo
+    boundary_name: Optional[str] = None  # "x_max", "x_min", "ground" o None
+    acceleration: float = 0.0  # Aceleración instantánea (m/s²)
 
 
 class MRUPhysicsModel:
@@ -208,3 +209,363 @@ class MRUPhysicsModel:
         if elapsed_time <= 0:
             return 0.0
         return distance / elapsed_time
+
+
+@dataclass(frozen=True)
+class MRUAParameters:
+    """Parámetros cinemáticos iniciales para la simulación de MRUA."""
+    x0: float                    # Posición inicial en metros
+    v0: float                    # Velocidad inicial en m/s (con signo según el sentido)
+    acceleration: float          # Aceleración constante en m/s² (con signo)
+    configured_duration: Optional[float] = None  # Duración de simulación deseada (s)
+
+    @property
+    def speed0(self) -> float:
+        """Rapidez inicial (magnitud escalar de v0 >= 0)."""
+        return abs(self.v0)
+
+    @property
+    def direction_sign0(self) -> int:
+        """Signo de sentido de movimiento inicial (+1, -1, 0)."""
+        if self.v0 > 0:
+            return 1
+        elif self.v0 < 0:
+            return -1
+        return 0
+
+    @property
+    def acceleration_sign(self) -> int:
+        """Signo de la aceleración (+1, -1, 0)."""
+        if self.acceleration > 0:
+            return 1
+        elif self.acceleration < 0:
+            return -1
+        return 0
+
+
+class MRUAPhysicsModel:
+    """
+    Modelo matemático y analítico de MRUA (Movimiento Rectilíneo Uniformemente Acelerado).
+
+    Aplica rigurosamente las soluciones exactas de las ecuaciones cinemáticas clásicas:
+        x(t) = x₀ + v₀ · t + ½ · a · t²
+        v(t) = v₀ + a · t
+        a(t) = a = constante
+        v² = v₀² + 2 · a · Δx
+
+    Distingue con rigor físico entre aceleración positiva/negativa, desaceleración,
+    detención momentánea y cambio de sentido.
+    """
+
+    def __init__(self, track: TrackConfig, params: MRUAParameters) -> None:
+        self.track = track
+        self.params = params
+        self.validate_configuration()
+
+        # Tiempo de inversión de sentido (cuando v(t) = 0)
+        self.turnaround_time: Optional[float] = self._calculate_turnaround_time()
+        self.turnaround_position: Optional[float] = (
+            self._position_at(self.turnaround_time) if self.turnaround_time is not None else None
+        )
+
+        # Tiempo máximo efectivo hasta alcanzar un límite de pista o duración configurada
+        self.boundary_hit_name: Optional[str] = None
+        self.time_to_boundary = self._calculate_time_to_boundary()
+        if params.configured_duration is not None and params.configured_duration > 0:
+            if params.configured_duration < self.time_to_boundary:
+                self.max_effective_time = params.configured_duration
+            else:
+                self.max_effective_time = self.time_to_boundary
+        else:
+            self.max_effective_time = self.time_to_boundary
+
+    def validate_configuration(self) -> None:
+        """Valida que los parámetros sean consistentes dentro de la pista."""
+        x0 = self.params.x0
+        if not self.track.contains(x0):
+            raise ValueError(
+                f"La posición inicial x0={x0:.2f} m se encuentra fuera de los límites "
+                f"de la pista [{self.track.x_min:.2f} m, {self.track.x_max:.2f} m]."
+            )
+
+    def _calculate_turnaround_time(self) -> Optional[float]:
+        """
+        Calcula el instante exacto t_turn > 0 en que el móvil se detiene v(t)=0
+        e invierte su sentido de avance.
+        Ocurre cuando la aceleración y la velocidad inicial tienen signos opuestos (a · v0 < 0).
+        """
+        v0 = self.params.v0
+        a = self.params.acceleration
+        if abs(a) < 1e-12:
+            return None  # Si a = 0 es MRU, nunca invierte
+        t_turn = -v0 / a
+        if t_turn > 1e-9:
+            return t_turn
+        return None
+
+    def _position_at(self, t: float) -> float:
+        """Calcula la posición analítica exacta x(t) = x0 + v0*t + 0.5*a*t²."""
+        return self.params.x0 + self.params.v0 * t + 0.5 * self.params.acceleration * (t ** 2)
+
+    def _velocity_at(self, t: float) -> float:
+        """Calcula la velocidad instantánea exacta v(t) = v0 + a*t."""
+        return self.params.v0 + self.params.acceleration * t
+
+    def _calculate_time_to_boundary(self) -> float:
+        """
+        Determina de forma analítica el tiempo mínimo positivo t > 0
+        en que el móvil alcanza x_min o x_max.
+        Resuelve: ½ a t² + v₀ t + (x₀ - x_bound) = 0.
+        """
+        a = self.params.acceleration
+        v0 = self.params.v0
+        x0 = self.params.x0
+
+        candidates: List[Tuple[float, str]] = []
+
+        for bound, bound_name in [(self.track.x_max, "x_max"), (self.track.x_min, "x_min")]:
+            c = x0 - bound
+            if abs(a) < 1e-12:
+                # Caso MRU degenerado (a = 0)
+                if abs(v0) > 1e-12:
+                    t = (bound - x0) / v0
+                    if t > 1e-7:
+                        candidates.append((t, bound_name))
+            else:
+                # Ecuación cuadrática: (0.5 * a) * t^2 + v0 * t + c = 0
+                A = 0.5 * a
+                B = v0
+                C = c
+                discriminant = (B ** 2) - (4.0 * A * C)
+                if discriminant >= 0:
+                    sqrt_d = discriminant ** 0.5
+                    t1 = (-B - sqrt_d) / (2.0 * A)
+                    t2 = (-B + sqrt_d) / (2.0 * A)
+                    for t_cand in (t1, t2):
+                        if t_cand > 1e-7:
+                            candidates.append((t_cand, bound_name))
+
+        if not candidates:
+            return float('inf')
+
+        candidates.sort(key=lambda item: item[0])
+        earliest_t, earliest_name = candidates[0]
+        self.boundary_hit_name = earliest_name
+        return earliest_t
+
+    def calculate_distance(self, t_eff: float) -> float:
+        """
+        Calcula la distancia real recorrida (escalar >= 0).
+        Si el cuerpo invirtió su sentido de marcha a t_turn, suma:
+            d = |x_turn - x0| + |x(t) - x_turn|
+        Si no hubo inversión o t_eff <= t_turn:
+            d = |x(t) - x0|
+        """
+        if t_eff <= 0:
+            return 0.0
+
+        if self.turnaround_time is not None and self.turnaround_position is not None:
+            if t_eff <= self.turnaround_time:
+                pos = self._position_at(t_eff)
+                return abs(pos - self.params.x0)
+            else:
+                d1 = abs(self.turnaround_position - self.params.x0)
+                pos = self._position_at(t_eff)
+                d2 = abs(pos - self.turnaround_position)
+                return d1 + d2
+        else:
+            pos = self._position_at(t_eff)
+            return abs(pos - self.params.x0)
+
+    def evaluate(self, t_eff: float) -> PhysicalState:
+        """
+        Evalúa el estado físico analítico en el instante efectivo t_eff (segundos).
+        Garantiza que el móvil no traspase las barreras de la pista.
+        """
+        if t_eff < 0:
+            t_eff = 0.0
+
+        x0 = self.params.x0
+        a = self.params.acceleration
+
+        reached_boundary = False
+        boundary_name = None
+
+        if t_eff >= self.max_effective_time and self.max_effective_time != float('inf'):
+            t_eff_actual = self.max_effective_time
+            if self.boundary_hit_name is not None and abs(t_eff_actual - self.time_to_boundary) < 1e-4:
+                reached_boundary = True
+                boundary_name = self.boundary_hit_name
+                pos = self.track.x_max if boundary_name == "x_max" else self.track.x_min
+                vel = 0.0
+                spd = 0.0
+            else:
+                # Finalizado por duración configurada
+                pos = self._position_at(t_eff_actual)
+                vel = self._velocity_at(t_eff_actual)
+                spd = abs(vel)
+        else:
+            t_eff_actual = t_eff
+            pos = self._position_at(t_eff_actual)
+            vel = self._velocity_at(t_eff_actual)
+            spd = abs(vel)
+
+        disp = pos - x0
+        dist = self.calculate_distance(t_eff_actual)
+
+        return PhysicalState(
+            t_eff=t_eff_actual,
+            position=pos,
+            displacement=disp,
+            distance=dist,
+            velocity=vel,
+            speed=spd,
+            reached_boundary=reached_boundary,
+            boundary_name=boundary_name,
+            acceleration=a
+        )
+
+
+@dataclass(frozen=True)
+class FreeFallParameters:
+    """Parámetros cinemáticos para simulación de Caída Libre y Lanzamiento Vertical."""
+    y0: float                            # Altura inicial sobre el suelo (m), >= 0
+    v0: float                            # Velocidad inicial vertical (m/s, + hacia arriba, - hacia abajo)
+    g: float = 9.81                      # Aceleración gravitatoria (m/s², por defecto 9.81)
+    configured_duration: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.y0 < 0:
+            raise ValueError(f"La altura inicial y0={self.y0:.2f} m no puede ser negativa.")
+        if self.g <= 0:
+            raise ValueError(f"La gravedad g={self.g:.2f} m/s² debe ser estrictamente positiva.")
+
+    @property
+    def speed0(self) -> float:
+        return abs(self.v0)
+
+
+class FreeFallPhysicsModel:
+    """
+    Modelo matemático y analítico de Caída Libre y Lanzamiento Vertical.
+
+    Convención de signos universal para física:
+    - Eje vertical orientado hacia arriba: +y es ascendente.
+    - Suelo de referencia en y = 0 m.
+    - Gravedad apuntando hacia abajo: aceleración a = -g (negativa).
+
+    Ecuaciones analíticas:
+        y(t) = y₀ + v₀ · t - ½ · g · t²
+        v(t) = v₀ - g · t
+        a(t) = -g = constante
+        v² = v₀² - 2 · g · (y - y₀)
+
+    Magnitudes clave:
+        - Altura máxima: h_max = y₀ + v₀² / (2g)  (si v₀ > 0)
+        - Tiempo de subida: t_subida = v₀ / g     (si v₀ > 0)
+        - Tiempo de vuelo hasta y₀: t_vuelo = 2 · v₀ / g  (si v₀ > 0)
+        - Tiempo de impacto con el suelo (y = 0): t_impacto = (v₀ + √(v₀² + 2·g·y₀)) / g
+        - Velocidad de impacto: v_impacto = -√(v₀² + 2·g·y₀)
+    """
+
+    def __init__(self, params: FreeFallParameters) -> None:
+        self.params = params
+
+        # Cálculo de magnitudes analíticas principales
+        y0 = params.y0
+        v0 = params.v0
+        g = params.g
+
+        if v0 > 0:
+            self.t_subida = v0 / g
+            self.h_max = y0 + ((v0 ** 2) / (2.0 * g))
+            self.t_vuelo_y0 = (2.0 * v0) / g
+        else:
+            self.t_subida = 0.0
+            self.h_max = y0
+            self.t_vuelo_y0 = 0.0
+
+        # Tiempo de colisión con el suelo y = 0
+        # ½ g t² - v0 t - y0 = 0 -> discriminante = v0² + 2 g y0
+        disc = (v0 ** 2) + (2.0 * g * y0)
+        self.t_impact = (v0 + (disc ** 0.5)) / g
+        self.v_impact = -(disc ** 0.5)
+
+        # Duración máxima efectiva
+        if params.configured_duration is not None and params.configured_duration > 0:
+            self.max_effective_time = min(self.t_impact, params.configured_duration)
+        else:
+            self.max_effective_time = self.t_impact
+
+    def _altitude_at(self, t: float) -> float:
+        """Calcula y(t) = y0 + v0*t - 0.5*g*t²."""
+        return self.params.y0 + (self.params.v0 * t) - (0.5 * self.params.g * (t ** 2))
+
+    def _velocity_at(self, t: float) -> float:
+        """Calcula v(t) = v0 - g*t."""
+        return self.params.v0 - (self.params.g * t)
+
+    def calculate_distance(self, t_eff: float) -> float:
+        """Calcula la distancia vertical total recorrida."""
+        if t_eff <= 0:
+            return 0.0
+
+        v0 = self.params.v0
+        y0 = self.params.y0
+
+        if v0 > 0:
+            if t_eff <= self.t_subida:
+                y = self._altitude_at(t_eff)
+                return y - y0
+            else:
+                d_subida = self.h_max - y0
+                y = max(0.0, self._altitude_at(t_eff))
+                d_bajada = self.h_max - y
+                return d_subida + d_bajada
+        else:
+            y = max(0.0, self._altitude_at(t_eff))
+            return y0 - y
+
+    def evaluate(self, t_eff: float) -> PhysicalState:
+        """Evalúa el estado físico analítico en el tiempo t_eff."""
+        if t_eff < 0:
+            t_eff = 0.0
+
+        y0 = self.params.y0
+        g = self.params.g
+
+        reached_boundary = False
+        boundary_name = None
+
+        if t_eff >= self.max_effective_time:
+            t_eff_actual = self.max_effective_time
+            if abs(t_eff_actual - self.t_impact) < 1e-4:
+                reached_boundary = True
+                boundary_name = "ground"
+                y = 0.0
+                vel = 0.0
+                spd = 0.0
+            else:
+                y = max(0.0, self._altitude_at(t_eff_actual))
+                vel = self._velocity_at(t_eff_actual)
+                spd = abs(vel)
+        else:
+            t_eff_actual = t_eff
+            y = max(0.0, self._altitude_at(t_eff_actual))
+            vel = self._velocity_at(t_eff_actual)
+            spd = abs(vel)
+
+        disp = y - y0
+        dist = self.calculate_distance(t_eff_actual)
+
+        return PhysicalState(
+            t_eff=t_eff_actual,
+            position=y,
+            displacement=disp,
+            distance=dist,
+            velocity=vel,
+            speed=spd,
+            reached_boundary=reached_boundary,
+            boundary_name=boundary_name,
+            acceleration=-g
+        )

@@ -2,13 +2,14 @@
 Módulo de la Ventana Principal del Laboratorio Virtual de Cinemática.
 
 Organiza la interfaz de usuario con diseño moderno y ergonómico:
-- Barra superior con título institucional, subtítulo y estado.
-- Menú de opciones (Archivo, Experimento, Herramientas, Ayuda).
-- Panel lateral izquierdo para configuración de pista, magnitudes y botones de control.
-- Panel derecho principal con:
-    1. Pista virtual interactiva (Canvas con recta graduada, origen, vector y vehículo).
-    2. Panel de telemetría de alta resolución (tarjetas métricas digitales).
-    3. Gráficas científicas de Matplotlib en tiempo real (x-t y v-t).
+- Barra superior con título institucional, subtítulo del módulo activo y atajos.
+- Menú de opciones (Archivo, Experimento, Módulos, Ayuda).
+- Navegación central por pestañas (Notebook):
+    1. MRU: Movimiento Rectilíneo Uniforme (Pista, Telemetría, Gráficas x-t y v-t).
+    2. MRUA: Movimiento Uniformemente Acelerado (Pista interactiva, Telemetría, 3 Gráficas x-t, v-t, a-t).
+    3. Caída Libre y Tiro Vertical (Pista vertical con suelo/torre/cúspide, Telemetría, 3 Gráficas y-t, v-t, a-t).
+    4. Resolución de Problemas Paso a Paso (Solucionador analítico independiente, unidades multidimensionales, 10 pasos pedagógicos).
+- Barra inferior con estado de sesión activa y exportaciones consolidada y multi-sesión.
 """
 
 import os
@@ -23,9 +24,20 @@ from .track_view import TrackView
 from .plots_view import PlotsView
 from .telemetry_panel import TelemetryPanel
 from .control_panel import ControlPanel
+from .mrua_track_view import MRUATrackView
+from .mrua_plots_view import MRUAPlotsView
+from .specialized_telemetry import MRUATelemetryPanel, VerticalTelemetryPanel
+from .mrua_control_panel import MRUAControlPanel
+from .vertical_track_view import VerticalTrackView
+from .free_fall_control_panel import FreeFallControlPanel
+from .solver_view import SolverView
 from .dialogs import SummaryDialog, TheoryGuideDialog, SessionManagerDialog
 from .detailed_plot_viewer import DetailedPlotViewer
-from ..controllers.simulation_controller import SimulationController
+from ..controllers.simulation_controller import (
+    SimulationController,
+    MRUASimulationController,
+    FreeFallSimulationController
+)
 from ..data.exporter import ExperimentDataExporter
 from ..data.schema import SessionMetadata, ExperimentRecord
 from ..data.repository import ExperimentRepository
@@ -38,8 +50,8 @@ class MainWindow:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Laboratorio Virtual de Cinemática: Movimiento Rectilíneo Uniforme (MRU)")
-        self.root.geometry("1280x850")
+        self.root.title("Laboratorio Virtual de Física Clásica y Cinemática (MRU - MRUA - Caída Libre)")
+        self.root.geometry("1300x870")
         self.root.minsize(1024, 720)
         self.root.configure(bg=Theme.BG_DARK)
 
@@ -51,15 +63,17 @@ class MainWindow:
         self.consolidator = DatasetConsolidator(self.repository)
         self.migrator = LegacyReportMigrator(self.repository)
 
-        # Controlador de simulación (se inicializa tras crear los componentes)
+        # Controladores de simulación para cada módulo
         self.controller: Optional[SimulationController] = None
+        self.mrua_controller: Optional[MRUASimulationController] = None
+        self.free_fall_controller: Optional[FreeFallSimulationController] = None
 
         self._build_menu()
         self._build_header()
         self._build_status_bar()
         self._build_main_layout()
 
-        # 2. Inicializar el controlador enlazado al repositorio
+        # 2. Inicializar el controlador MRU (preservando retrocompatibilidad)
         self.controller = SimulationController(
             root=self.root,
             get_ui_components=lambda: (
@@ -72,18 +86,48 @@ class MainWindow:
             on_experiment_saved=self._on_experiment_saved,
             on_save_error=self._on_save_error
         )
-
-        # Enviar configuración inicial a la vista
         track, params = self.control_panel.get_current_config()
         self.controller.on_config_changed(track, params)
+
+        # 3. Inicializar el controlador MRUA
+        self.mrua_controller = MRUASimulationController(
+            root=self.root,
+            get_ui_components=lambda: (
+                self.mrua_track_view,
+                self.mrua_plots_view,
+                self.mrua_telemetry_panel,
+                self.mrua_control_panel
+            ),
+            repository=self.repository,
+            on_experiment_saved=self._on_experiment_saved,
+            on_save_error=self._on_save_error
+        )
+        mrua_track, mrua_params = self.mrua_control_panel.get_current_config()
+        self.mrua_controller.on_config_changed(mrua_track, mrua_params)
+
+        # 4. Inicializar el controlador de Caída Libre
+        self.free_fall_controller = FreeFallSimulationController(
+            root=self.root,
+            get_ui_components=lambda: (
+                self.vertical_track_view,
+                self.vertical_plots_view,
+                self.vertical_telemetry_panel,
+                self.free_fall_control_panel
+            ),
+            repository=self.repository,
+            on_experiment_saved=self._on_experiment_saved,
+            on_save_error=self._on_save_error
+        )
+        ff_params = self.free_fall_control_panel.get_current_config()
+        self.free_fall_controller.on_config_changed(ff_params)
 
         # Refrescar estado visual de la sesión activa
         self._refresh_session_ui()
 
-        # Atajos de teclado útiles
+        # Atajos de teclado útiles dinámicos según el módulo activo
         self.root.bind("<space>", self._on_spacebar_pressed)
-        self.root.bind("<Escape>", lambda e: self.controller.stop("Detenido mediante Escape"))
-        self.root.bind("<Control-r>", lambda e: self.controller.reset())
+        self.root.bind("<Escape>", self._on_escape_pressed)
+        self.root.bind("<Control-r>", self._on_reset_pressed)
         self.root.bind("<Control-g>", lambda e: self.show_detailed_plot_viewer())
         self.root.bind("<F11>", lambda e: self.show_detailed_plot_viewer())
         self.root.bind("<Control-e>", lambda e: self.show_export_session_dataset_dialog())
@@ -104,25 +148,33 @@ class MainWindow:
         menu_file.add_command(label="🔄 Migrar Informe CSV Antiguo...", command=self.show_migrate_legacy_dialog)
         menu_file.add_command(label="📁 Abrir Directorio de Datos Locales...", command=self.open_data_directory)
         menu_file.add_separator()
-        menu_file.add_command(label="💾 Exportar Datos de este Simulacro a CSV (Individual)...", command=self.show_export_csv_dialog)
+        menu_file.add_command(label="💾 Exportar Datos de este Simulacro a CSV (Individual)...", command=lambda: self.show_export_csv_dialog())
         menu_file.add_separator()
         menu_file.add_command(label="Salir", command=self.root.quit)
+
+        # Menú Módulos de Física
+        menu_mods = tk.Menu(menubar, tearoff=0, bg=Theme.BG_CARD, fg=Theme.TEXT_LIGHT)
+        menubar.add_cascade(label="Módulos", menu=menu_mods)
+        menu_mods.add_command(label="1. 🚗 Movimiento Rectilíneo Uniforme (MRU)", command=lambda: self.switch_to_tab(0))
+        menu_mods.add_command(label="2. 🏎️ Movimiento Uniformemente Acelerado (MRUA)", command=lambda: self.switch_to_tab(1))
+        menu_mods.add_command(label="3. 🍏 Caída Libre y Tiro Vertical", command=lambda: self.switch_to_tab(2))
+        menu_mods.add_command(label="4. 🧮 Resolución de Problemas Paso a Paso", command=lambda: self.switch_to_tab(3))
 
         # Menú Experimento
         menu_exp = tk.Menu(menubar, tearoff=0, bg=Theme.BG_CARD, fg=Theme.TEXT_LIGHT)
         menubar.add_cascade(label="Experimento", menu=menu_exp)
-        menu_exp.add_command(label="Iniciar (Espacio)", command=lambda: self.controller.start() if self.controller else None)
+        menu_exp.add_command(label="Iniciar Simulación Activa (Espacio)", command=lambda: self.get_active_controller().start() if self.get_active_controller() else None)
         menu_exp.add_command(label="Pausar / Continuar (Espacio)", command=self._toggle_pause_resume)
-        menu_exp.add_command(label="Finalizar (Esc)", command=lambda: self.controller.stop() if self.controller else None)
-        menu_exp.add_command(label="Reiniciar (Ctrl+R)", command=lambda: self.controller.reset() if self.controller else None)
+        menu_exp.add_command(label="Finalizar Simulación (Esc)", command=lambda: self.get_active_controller().stop() if self.get_active_controller() else None)
+        menu_exp.add_command(label="Reiniciar (Ctrl+R)", command=lambda: self.get_active_controller().reset() if self.get_active_controller() else None)
         menu_exp.add_separator()
-        menu_exp.add_command(label="🔍 Ampliar Gráfica y Ver en Detalle... (Ctrl+G)", command=self.show_detailed_plot_viewer)
-        menu_exp.add_command(label="📊 Ver Informe Científico", command=self.show_summary_dialog)
+        menu_exp.add_command(label="🔍 Ampliar Gráfica y Ver en Detalle... (Ctrl+G)", command=lambda: self.show_detailed_plot_viewer())
+        menu_exp.add_command(label="📊 Ver Informe Científico", command=lambda: self.show_summary_dialog())
 
         # Menú Ayuda
         menu_help = tk.Menu(menubar, tearoff=0, bg=Theme.BG_CARD, fg=Theme.TEXT_LIGHT)
         menubar.add_cascade(label="Ayuda", menu=menu_help)
-        menu_help.add_command(label="Guía Teórica de Cinemática...", command=self.show_theory_dialog)
+        menu_help.add_command(label="Guía Teórica de Cinemática (MRU, MRUA, Gravedad)...", command=self.show_theory_dialog)
         menu_help.add_command(label="Acerca del Laboratorio...", command=self._show_about_dialog)
 
     def _build_header(self) -> None:
@@ -135,21 +187,21 @@ class MainWindow:
 
         lbl_title = tk.Label(
             title_box,
-            text="LABORATORIO VIRTUAL DE CINEMÁTICA",
+            text="LABORATORIO VIRTUAL DE FÍSICA Y CINEMÁTICA",
             bg=Theme.BG_CARD,
             fg=Theme.PRIMARY,
             font=Theme.FONT_TITLE
         )
         lbl_title.pack(anchor="w")
 
-        lbl_sub = tk.Label(
+        self.lbl_sub = tk.Label(
             title_box,
-            text="Simulador Interactivo de Movimiento Rectilíneo Uniforme (MRU) | x(t) = x₀ + v · t",
+            text="Módulo Activo: Movimiento Rectilíneo Uniforme (MRU) | x(t) = x₀ + v · t",
             bg=Theme.BG_CARD,
             fg=Theme.TEXT_MUTED,
             font=(Theme.FONT_FAMILY, 9)
         )
-        lbl_sub.pack(anchor="w")
+        self.lbl_sub.pack(anchor="w")
 
         info_box = tk.Frame(header_frame, bg=Theme.BG_CARD)
         info_box.pack(side=tk.RIGHT)
@@ -237,73 +289,226 @@ class MainWindow:
         ).pack(side=tk.LEFT, padx=3)
 
     def _build_main_layout(self) -> None:
-        """Construye la distribución de paneles con diseño responsivo."""
-        main_container = tk.Frame(self.root, bg=Theme.BG_DARK, padx=10, pady=8)
-        main_container.pack(fill=tk.BOTH, expand=True)
+        """Construye las 4 secciones principales diferenciadas del laboratorio mediante pestañas ergonómicas."""
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
 
-        # Panel izquierdo (Configuración y Controles)
+        # =====================================================================
+        # PESTAÑA 1: MOVIMIENTO RECTILÍNEO UNIFORME (MRU)
+        # =====================================================================
+        tab_mru = tk.Frame(self.notebook, bg=Theme.BG_DARK, padx=4, pady=4)
+        self.notebook.add(tab_mru, text="  🚗 Movimiento Rectilíneo Uniforme (MRU)  ")
+
+        mru_split = tk.Frame(tab_mru, bg=Theme.BG_DARK)
+        mru_split.pack(fill=tk.BOTH, expand=True)
+
         self.control_panel = ControlPanel(
-            main_container,
+            mru_split,
             on_start=lambda: self.controller.start() if self.controller else None,
             on_pause=lambda: self.controller.pause() if self.controller else None,
             on_resume=lambda: self.controller.resume() if self.controller else None,
             on_stop=lambda: self.controller.stop() if self.controller else None,
             on_reset=lambda: self.controller.reset() if self.controller else None,
             on_config_changed=lambda t, p: self.controller.on_config_changed(t, p) if self.controller else None,
-            on_show_summary=self.show_summary_dialog,
-            on_export_csv=self.show_export_csv_dialog,
+            on_show_summary=lambda: self.show_summary_dialog(self.controller),
+            on_export_csv=lambda: self.show_export_csv_dialog(self.controller),
             on_show_theory=self.show_theory_dialog,
-            on_expand_plot=self.show_detailed_plot_viewer,
+            on_expand_plot=lambda: self.show_detailed_plot_viewer(self.controller),
             on_export_session_dataset=self.show_export_session_dataset_dialog,
             on_export_historical_dataset=self.show_export_historical_dataset_dialog,
             on_manage_sessions=self.show_session_manager_dialog,
             on_new_session=self.create_new_session_dialog,
             width=320
         )
-        self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         self.control_panel.pack_propagate(False)
 
-        # Panel derecho (Pista, Telemetría y Gráficas)
-        right_container = tk.Frame(main_container, bg=Theme.BG_DARK)
-        right_container.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        mru_right = tk.Frame(mru_split, bg=Theme.BG_DARK)
+        mru_right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # 1. Pista virtual superior
         self.track_view = TrackView(
-            right_container,
+            mru_right,
             track=self.control_panel.get_current_config()[0]
         )
-        self.track_view.pack(fill=tk.X, pady=(0, 6))
+        self.track_view.pack(fill=tk.X, pady=(0, 4))
 
-        # 2. Panel de telemetría intermedio
-        self.telemetry_panel = TelemetryPanel(right_container)
-        self.telemetry_panel.pack(fill=tk.X, pady=(0, 6))
+        self.telemetry_panel = TelemetryPanel(mru_right)
+        self.telemetry_panel.pack(fill=tk.X, pady=(0, 4))
 
-        # 3. Gráficas científicas inferiores
         self.plots_view = PlotsView(
-            right_container,
-            on_expand_plot=self.show_detailed_plot_viewer
+            mru_right,
+            on_expand_plot=lambda: self.show_detailed_plot_viewer(self.controller)
         )
         self.plots_view.pack(fill=tk.BOTH, expand=True)
 
+        # =====================================================================
+        # PESTAÑA 2: MOVIMIENTO UNIFORMEMENTE ACELERADO (MRUA)
+        # =====================================================================
+        tab_mrua = tk.Frame(self.notebook, bg=Theme.BG_DARK, padx=4, pady=4)
+        self.notebook.add(tab_mrua, text="  🏎️ Movimiento Uniformemente Acelerado (MRUA)  ")
+
+        mrua_split = tk.Frame(tab_mrua, bg=Theme.BG_DARK)
+        mrua_split.pack(fill=tk.BOTH, expand=True)
+
+        self.mrua_control_panel = MRUAControlPanel(
+            mrua_split,
+            on_start=lambda: self.mrua_controller.start() if self.mrua_controller else None,
+            on_pause=lambda: self.mrua_controller.pause() if self.mrua_controller else None,
+            on_resume=lambda: self.mrua_controller.resume() if self.mrua_controller else None,
+            on_stop=lambda: self.mrua_controller.stop() if self.mrua_controller else None,
+            on_reset=lambda: self.mrua_controller.reset() if self.mrua_controller else None,
+            on_config_changed=lambda t, p: self.mrua_controller.on_config_changed(t, p) if self.mrua_controller else None,
+            on_show_summary=lambda: self.show_summary_dialog(self.mrua_controller),
+            on_show_theory=self.show_theory_dialog,
+            width=320
+        )
+        self.mrua_control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        self.mrua_control_panel.pack_propagate(False)
+
+        mrua_right = tk.Frame(mrua_split, bg=Theme.BG_DARK)
+        mrua_right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        self.mrua_track_view = MRUATrackView(
+            mrua_right,
+            track=self.mrua_control_panel.get_current_config()[0]
+        )
+        self.mrua_track_view.pack(fill=tk.X, pady=(0, 4))
+
+        self.mrua_telemetry_panel = MRUATelemetryPanel(mrua_right)
+        self.mrua_telemetry_panel.pack(fill=tk.X, pady=(0, 4))
+
+        self.mrua_plots_view = MRUAPlotsView(
+            mrua_right,
+            is_vertical=False,
+            on_expand_plot=lambda: self.show_detailed_plot_viewer(self.mrua_controller)
+        )
+        self.mrua_plots_view.pack(fill=tk.BOTH, expand=True)
+
+        # =====================================================================
+        # PESTAÑA 3: CAÍDA LIBRE Y LANZAMIENTO VERTICAL
+        # =====================================================================
+        tab_ff = tk.Frame(self.notebook, bg=Theme.BG_DARK, padx=4, pady=4)
+        self.notebook.add(tab_ff, text="  🍏 Caída Libre y Tiro Vertical  ")
+
+        ff_split = tk.Frame(tab_ff, bg=Theme.BG_DARK)
+        ff_split.pack(fill=tk.BOTH, expand=True)
+
+        self.free_fall_control_panel = FreeFallControlPanel(
+            ff_split,
+            on_start=lambda: self.free_fall_controller.start() if self.free_fall_controller else None,
+            on_pause=lambda: self.free_fall_controller.pause() if self.free_fall_controller else None,
+            on_resume=lambda: self.free_fall_controller.resume() if self.free_fall_controller else None,
+            on_stop=lambda: self.free_fall_controller.stop() if self.free_fall_controller else None,
+            on_reset=lambda: self.free_fall_controller.reset() if self.free_fall_controller else None,
+            on_config_changed=lambda p: self.free_fall_controller.on_config_changed(p) if self.free_fall_controller else None,
+            on_show_summary=lambda: self.show_summary_dialog(self.free_fall_controller),
+            on_show_theory=self.show_theory_dialog,
+            width=320
+        )
+        self.free_fall_control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        self.free_fall_control_panel.pack_propagate(False)
+
+        ff_right = tk.Frame(ff_split, bg=Theme.BG_DARK)
+        ff_right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        self.vertical_track_view = VerticalTrackView(ff_right, max_height=60.0)
+        self.vertical_track_view.pack(fill=tk.X, pady=(0, 4))
+
+        self.vertical_telemetry_panel = VerticalTelemetryPanel(ff_right)
+        self.vertical_telemetry_panel.pack(fill=tk.X, pady=(0, 4))
+
+        self.vertical_plots_view = MRUAPlotsView(
+            ff_right,
+            is_vertical=True,
+            on_expand_plot=lambda: self.show_detailed_plot_viewer(self.free_fall_controller)
+        )
+        self.vertical_plots_view.pack(fill=tk.BOTH, expand=True)
+
+        # =====================================================================
+        # PESTAÑA 4: RESOLUCIÓN DE PROBLEMAS PASO A PASO
+        # =====================================================================
+        tab_solver = tk.Frame(self.notebook, bg=Theme.BG_DARK, padx=4, pady=4)
+        self.notebook.add(tab_solver, text="  🧮 Resolución de Problemas  ")
+
+        self.solver_view = SolverView(tab_solver)
+        self.solver_view.pack(fill=tk.BOTH, expand=True)
+
+        # Enlace del evento de cambio de pestaña para ajustar subtítulos e interactividad
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def switch_to_tab(self, index: int) -> None:
+        """Cambia programáticamente a la pestaña especificada (0: MRU, 1: MRUA, 2: Caída Libre, 3: Solver)."""
+        try:
+            self.notebook.select(index)
+        except Exception:
+            pass
+
+    def _on_tab_changed(self, event=None) -> None:
+        """Actualiza el subtítulo descriptivo al alternar de módulo."""
+        try:
+            idx = self.notebook.index(self.notebook.select())
+            descriptions = [
+                ("MRU", "x(t) = x₀ + v · t | Movimiento a velocidad constante (a = 0)"),
+                ("MRUA", "x(t) = x₀ + v₀·t + ½·a·t² | v(t) = v₀ + a·t | Aceleración constante"),
+                ("Caída Libre", "y(t) = y₀ + v₀·t - ½·g·t² | Gravedad g hacia abajo (a = -g)"),
+                ("Solucionador Paso a Paso", "Motor algebraico riguroso | Despejes, sustitución e interpretación")
+            ]
+            if idx < len(descriptions):
+                mod_name, mod_desc = descriptions[idx]
+                self.lbl_sub.config(text=f"Módulo Activo: {mod_name} | {mod_desc}")
+        except Exception:
+            pass
+
+    def get_active_controller(self):
+        """Retorna el controlador de simulación correspondiente a la pestaña actualmente en foco."""
+        try:
+            idx = self.notebook.index(self.notebook.select())
+            if idx == 0:
+                return self.controller
+            elif idx == 1:
+                return self.mrua_controller
+            elif idx == 2:
+                return self.free_fall_controller
+            return self.controller
+        except Exception:
+            return self.controller
+
     def _on_spacebar_pressed(self, event) -> None:
-        """Maneja la barra espaciadora para Iniciar, Pausar o Reanudar de forma intuitiva."""
-        if self.controller is None:
+        """Maneja la barra espaciadora para Iniciar, Pausar o Reanudar el simulador activo."""
+        ctrl = self.get_active_controller()
+        if ctrl is None:
             return
-        status = self.controller.status
+        status = ctrl.status
         from ..models.experiment_state import ExperimentStatus
         if status == ExperimentStatus.READY:
-            self.controller.start()
+            ctrl.start()
         elif status == ExperimentStatus.RUNNING:
-            self.controller.pause()
+            ctrl.pause()
         elif status == ExperimentStatus.PAUSED:
-            self.controller.resume()
+            ctrl.resume()
+
+    def _on_escape_pressed(self, event=None) -> None:
+        """Detiene la simulación del módulo activo."""
+        ctrl = self.get_active_controller()
+        if ctrl:
+            ctrl.stop("Detenido mediante Escape")
+
+    def _on_reset_pressed(self, event=None) -> None:
+        """Reinicia la simulación del módulo activo."""
+        ctrl = self.get_active_controller()
+        if ctrl:
+            ctrl.reset()
 
     def _toggle_pause_resume(self) -> None:
-        """Alterna entre pausar y continuar."""
-        if self.controller is None:
+        """Alterna entre pausar y continuar el simulador activo."""
+        ctrl = self.get_active_controller()
+        if ctrl is None:
             return
         from ..models.experiment_state import ExperimentStatus
-        if self.controller.status == ExperimentStatus.RUNNING:
+        if ctrl.status == ExperimentStatus.RUNNING:
+            ctrl.pause()
+        elif ctrl.status == ExperimentStatus.PAUSED:
+            ctrl.resume()
             self.controller.pause()
         elif self.controller.status == ExperimentStatus.PAUSED:
             self.controller.resume()

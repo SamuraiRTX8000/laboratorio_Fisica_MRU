@@ -10,10 +10,10 @@ Proporciona ventanas modales diseñadas para la docencia universitaria:
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-from typing import Optional, Callable, Dict, Any, List
+from typing import Optional, Callable, Dict, Any, List, Union
 from .theme import Theme
 from ..models.experiment_state import ExperimentSummary, MeasurementSample
-from ..models.physics import TrackConfig, MRUParameters
+from ..models.physics import TrackConfig, MRUParameters, MRUAParameters, FreeFallParameters
 from ..data.exporter import ExperimentDataExporter
 
 
@@ -25,8 +25,8 @@ class SummaryDialog(tk.Toplevel):
         parent: tk.Widget,
         summary: ExperimentSummary,
         samples: list[MeasurementSample],
-        track: TrackConfig,
-        params: MRUParameters,
+        track: Optional[TrackConfig],
+        params: Union[MRUParameters, MRUAParameters, FreeFallParameters],
         on_export_callback: Optional[Callable[[], None]] = None
     ) -> None:
         super().__init__(parent)
@@ -36,8 +36,9 @@ class SummaryDialog(tk.Toplevel):
         self.params = params
         self.on_export_callback = on_export_callback
 
-        self.title("Informe Científico y Análisis del Experimento - MRU")
-        self.geometry("680x620")
+        mtype = getattr(self.summary, "motion_type", "MRU")
+        self.title(f"Informe Científico y Análisis del Experimento - {mtype}")
+        self.geometry("700x640")
         self.minsize(580, 520)
         self.configure(bg=Theme.BG_DARK)
         self.transient(parent)
@@ -104,23 +105,62 @@ class SummaryDialog(tk.Toplevel):
         )
         frame_table.pack(fill=tk.X, pady=(0, 12))
 
-        rows = [
-            ("Límites de la pista:", f"[{self.track.x_min:.1f} m, {self.track.x_max:.1f} m] (Longitud: {self.track.total_length:.1f} m)", "Sistema de referencia"),
-            ("Posición inicial (x₀):", f"{self.summary.x0:+.4f} m", "Punto de partida"),
-            ("Posición final (x_final):", f"{self.summary.x_final:+.4f} m", "Punto de llegada"),
-            ("Desplazamiento vectorial (Δx):", f"{self.summary.displacement:+.4f} m", "Δx = x_final - x₀ (con signo)"),
-            ("Distancia recorrida (d):", f"{self.summary.distance:.4f} m", "Longitud de la trayectoria (escalar)"),
-            ("Velocidad configurada (v):", f"{self.summary.configured_velocity:+.4f} m/s", "Constante durante el movimiento"),
-            ("Rapidez configurada (|v|):", f"{self.summary.configured_speed:.4f} m/s", "Magnitud de la velocidad"),
-            ("Tiempo efectivo de movimiento (t_eff):", f"{self.summary.t_eff:.4f} s", "Cronómetro activo de traslación"),
-            ("Tiempo total del experimento (t_total):", f"{self.summary.t_total:.4f} s", "Tiempo de pared (incluye pausas)"),
-            ("Número de pausas:", f"{self.summary.pause_count}", f"Tiempo acumulado en pausa: {self.summary.total_pause_duration:.2f} s"),
-            ("Velocidad media efectiva:", f"{self.summary.v_avg_eff:+.4f} m/s", "Δx / t_eff (coincide con v en MRU)"),
-            ("Rapidez media efectiva:", f"{self.summary.s_avg_eff:.4f} m/s", "d / t_eff"),
-            ("Velocidad media global (con pausas):", f"{self.summary.v_avg_total:+.4f} m/s", "Δx / t_total (afectada por pausas)"),
-            ("Rapidez media global (con pausas):", f"{self.summary.s_avg_total:.4f} m/s", "d / t_total"),
-            ("Muestras telemétricas capturadas:", f"{len(self.samples)} muestras", "Registro empírico en tiempo real"),
-        ]
+        mtype = getattr(self.summary, "motion_type", "MRU")
+        if mtype == "CAIDA_LIBRE":
+            rows = [
+                ("Sistema de referencia vertical:", "Suelo en y = 0 m (Sentido +y ascendente)", "Convención física universal"),
+                ("Altura inicial (y₀):", f"{self.summary.x0:+.4f} m", "Punto de lanzamiento"),
+                ("Altura final (y_final):", f"{self.summary.x_final:+.4f} m", "Punto final de la trayectoria"),
+                ("Desplazamiento vertical (Δy):", f"{self.summary.displacement:+.4f} m", "Δy = y_final - y₀ (con signo)"),
+                ("Distancia total recorrida (d):", f"{self.summary.distance:.4f} m", "Suma de tramos ascendente y descendente"),
+                ("Velocidad inicial vertical (v₀):", f"{self.summary.configured_velocity:+.4f} m/s", "Con signo (+ arriba, - abajo)"),
+                ("Aceleración de gravedad (ay):", f"{self.summary.configured_acceleration:+.4f} m/s²", "ay = -g (constante hacia abajo)"),
+                ("Tiempo efectivo de vuelo (t_eff):", f"{self.summary.t_eff:.4f} s", "Duración en el aire"),
+                ("Tiempo total del experimento (t_total):", f"{self.summary.t_total:.4f} s", "Tiempo de pared (incluye pausas)"),
+                ("Número de pausas:", f"{self.summary.pause_count}", f"Tiempo acumulado en pausa: {self.summary.total_pause_duration:.2f} s"),
+                ("Velocidad media efectiva:", f"{self.summary.v_avg_eff:+.4f} m/s", "Δy / t_eff"),
+                ("Rapidez media efectiva:", f"{self.summary.s_avg_eff:.4f} m/s", "d / t_eff"),
+                ("Muestras telemétricas capturadas:", f"{len(self.samples)} muestras", "Registro empírico en tiempo real"),
+            ]
+        elif mtype == "MRUA":
+            track_str = f"[{self.track.x_min:.1f} m, {self.track.x_max:.1f} m]" if self.track else "Pista numérica"
+            v_final_calc = self.summary.configured_velocity + (self.summary.configured_acceleration * self.summary.t_eff)
+            rows = [
+                ("Límites de la pista:", track_str, "Sistema de referencia"),
+                ("Posición inicial (x₀):", f"{self.summary.x0:+.4f} m", "Punto de partida"),
+                ("Posición final (x_final):", f"{self.summary.x_final:+.4f} m", "Punto de llegada"),
+                ("Desplazamiento vectorial (Δx):", f"{self.summary.displacement:+.4f} m", "Δx = x_final - x₀ (con signo)"),
+                ("Distancia recorrida (d):", f"{self.summary.distance:.4f} m", "Longitud total de trayectoria recorrida"),
+                ("Velocidad inicial (v₀):", f"{self.summary.configured_velocity:+.4f} m/s", "Velocidad al inicio de la simulación"),
+                ("Aceleración constante (a):", f"{self.summary.configured_acceleration:+.4f} m/s²", "Tasa de cambio de velocidad a = cte"),
+                ("Velocidad final instantánea:", f"{v_final_calc:+.4f} m/s", "v = v₀ + a · t_eff"),
+                ("Tiempo efectivo de movimiento (t_eff):", f"{self.summary.t_eff:.4f} s", "Cronómetro activo de traslación"),
+                ("Tiempo total del experimento (t_total):", f"{self.summary.t_total:.4f} s", "Tiempo de pared (incluye pausas)"),
+                ("Número de pausas:", f"{self.summary.pause_count}", f"Tiempo acumulado en pausa: {self.summary.total_pause_duration:.2f} s"),
+                ("Velocidad media efectiva:", f"{self.summary.v_avg_eff:+.4f} m/s", "Δx / t_eff"),
+                ("Velocidad media teórica:", f"{(self.summary.configured_velocity + v_final_calc)/2.0:+.4f} m/s", "v_med = (v₀ + v) / 2"),
+                ("Rapidez media efectiva:", f"{self.summary.s_avg_eff:.4f} m/s", "d / t_eff"),
+                ("Muestras telemétricas capturadas:", f"{len(self.samples)} muestras", "Registro empírico en tiempo real"),
+            ]
+        else:
+            track_str = f"[{self.track.x_min:.1f} m, {self.track.x_max:.1f} m] (Longitud: {self.track.total_length:.1f} m)" if self.track else "[-50.0 m, 50.0 m]"
+            rows = [
+                ("Límites de la pista:", track_str, "Sistema de referencia"),
+                ("Posición inicial (x₀):", f"{self.summary.x0:+.4f} m", "Punto de partida"),
+                ("Posición final (x_final):", f"{self.summary.x_final:+.4f} m", "Punto de llegada"),
+                ("Desplazamiento vectorial (Δx):", f"{self.summary.displacement:+.4f} m", "Δx = x_final - x₀ (con signo)"),
+                ("Distancia recorrida (d):", f"{self.summary.distance:.4f} m", "Longitud de la trayectoria (escalar)"),
+                ("Velocidad configurada (v):", f"{self.summary.configured_velocity:+.4f} m/s", "Constante durante el movimiento"),
+                ("Rapidez configurada (|v|):", f"{self.summary.configured_speed:.4f} m/s", "Magnitud de la velocidad"),
+                ("Tiempo efectivo de movimiento (t_eff):", f"{self.summary.t_eff:.4f} s", "Cronómetro activo de traslación"),
+                ("Tiempo total del experimento (t_total):", f"{self.summary.t_total:.4f} s", "Tiempo de pared (incluye pausas)"),
+                ("Número de pausas:", f"{self.summary.pause_count}", f"Tiempo acumulado en pausa: {self.summary.total_pause_duration:.2f} s"),
+                ("Velocidad media efectiva:", f"{self.summary.v_avg_eff:+.4f} m/s", "Δx / t_eff (coincide con v en MRU)"),
+                ("Rapidez media efectiva:", f"{self.summary.s_avg_eff:.4f} m/s", "d / t_eff"),
+                ("Velocidad media global (con pausas):", f"{self.summary.v_avg_total:+.4f} m/s", "Δx / t_total (afectada por pausas)"),
+                ("Rapidez media global (con pausas):", f"{self.summary.s_avg_total:.4f} m/s", "d / t_total"),
+                ("Muestras telemétricas capturadas:", f"{len(self.samples)} muestras", "Registro empírico en tiempo real"),
+            ]
 
         for i, (col1, col2, col3) in enumerate(rows):
             bg_row = Theme.BG_CARD if i % 2 == 0 else Theme.BG_CARD_LIGHT
@@ -131,10 +171,10 @@ class SummaryDialog(tk.Toplevel):
             tk.Label(r_frame, text=col2, bg=bg_row, fg=Theme.TEXT_LIGHT, font=(Theme.FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side=tk.LEFT)
             tk.Label(r_frame, text=col3, bg=bg_row, fg=Theme.PRIMARY, font=(Theme.FONT_FAMILY, 8, "italic"), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # 2. Comprobación del Modelo de MRU y Explicación Pedagógica
+        # 2. Comprobación del Modelo Científico y Explicación Pedagógica
         frame_analysis = tk.LabelFrame(
             scrollable_frame,
-            text=" 2. Verificación Científica del Modelo MRU ",
+            text=f" 2. Verificación Científica del Modelo ({mtype}) ",
             bg=Theme.BG_CARD,
             fg=Theme.PRIMARY,
             font=(Theme.FONT_FAMILY, 10, "bold"),
@@ -145,7 +185,7 @@ class SummaryDialog(tk.Toplevel):
 
         # Badge de verificación
         status_color = Theme.SUCCESS if self.summary.is_mru_verified else Theme.WARNING
-        status_text = "✓ COMPORTAMIENTO COMPATIBLE CON MRU" if self.summary.is_mru_verified else "⚠️ DESVIACIÓN DETECTADA"
+        status_text = f"✓ COMPORTAMIENTO COMPATIBLE CON {mtype}" if self.summary.is_mru_verified else "⚠️ DESVIACIÓN DETECTADA"
 
         tk.Label(
             frame_analysis,
@@ -225,9 +265,9 @@ class TheoryGuideDialog(tk.Toplevel):
 
     def __init__(self, parent: tk.Widget) -> None:
         super().__init__(parent)
-        self.title("Fundamentos de Cinemática - Movimiento Rectilíneo Uniforme")
-        self.geometry("740x650")
-        self.minsize(620, 500)
+        self.title("Guía Teórica de Cinemática - MRU, MRUA y Caída Libre")
+        self.geometry("820x680")
+        self.minsize(680, 520)
         self.configure(bg=Theme.BG_DARK)
         self.transient(parent)
 
@@ -251,8 +291,20 @@ class TheoryGuideDialog(tk.Toplevel):
         self._populate_tab3(tab3)
 
         # Pestaña 4: Ecuación MRU y Gráficas
-        tab4 = self._create_scrollable_tab(notebook, "4. Ecuación y Gráficas")
+        tab4 = self._create_scrollable_tab(notebook, "4. MRU y Gráficas")
         self._populate_tab4(tab4)
+
+        # Pestaña 5: MRUA y Aceleración
+        tab5 = self._create_scrollable_tab(notebook, "5. MRUA y Aceleración")
+        self._populate_tab5(tab5)
+
+        # Pestaña 6: Caída Libre y Gravedad
+        tab6 = self._create_scrollable_tab(notebook, "6. Caída Libre y Gravedad")
+        self._populate_tab6(tab6)
+
+        # Pestaña 7: Catálogo de Ecuaciones y Despejes
+        tab7 = self._create_scrollable_tab(notebook, "7. Ecuaciones y Despejes")
+        self._populate_tab7(tab7)
 
         # Botón de cierre inferior
         btn_close = ttk.Button(self, text="Cerrar Guía", style="Secondary.TButton", command=self.destroy)
@@ -417,6 +469,168 @@ class TheoryGuideDialog(tk.Toplevel):
             "Es una línea recta horizontal constante a la altura v. "
             "El área geométrica comprendida bajo la recta entre dos instantes de tiempo t₁ y t₂ "
             "equivale exactamente al desplazamiento realizado: Área = v · Δt = Δx."
+        )
+
+    def _populate_tab5(self, parent: tk.Frame) -> None:
+        """Contenido sobre Movimiento Rectilíneo Uniformemente Acelerado (MRUA)."""
+        self._add_heading(parent, "Movimiento Uniformemente Acelerado (MRUA)")
+        self._add_paragraph(
+            parent,
+            "El MRUA es aquel movimiento rectilíneo en el cual la aceleración permanece constante "
+            "a lo largo de todo el intervalo (a = constante ≠ 0). Por ende, la velocidad cambia a un ritmo "
+            "fijo y predecible en cada segundo de movimiento."
+        )
+
+        self._add_subheading(parent, "Concepto y Ecuación de la Aceleración")
+        self._add_formula_box(parent, "a = Δv / Δt = (v - v₀) / t", "Aceleración Constante [m/s²]")
+        self._add_paragraph(
+            parent,
+            "La aceleración es una magnitud vectorial que cuantifica la rapidez y el sentido con que varía "
+            "la velocidad. Sus unidades fundamentales en el SI son metros por segundo al cuadrado [m/s²]."
+        )
+
+        self._add_subheading(parent, "Signo de la Aceleración vs. Rapidez (¡Distinción Fundamental!)")
+        self._add_bullet(
+            parent,
+            "Aceleración Positiva (a > 0):",
+            "Apunta en el sentido positivo (+x). Si la velocidad es positiva (v > 0), el móvil acelera "
+            "(aumenta su rapidez). Pero si la velocidad es negativa (v < 0), la aceleración positiva "
+            "hace que el móvil frene hasta detenerse y luego comience a avanzar hacia la derecha."
+        )
+        self._add_bullet(
+            parent,
+            "Aceleración Negativa (a < 0):",
+            "Apunta en el sentido negativo (-x). No significa necesariamente 'frenar'. "
+            "Si v > 0, el móvil desacelera hasta detenerse. Pero si v < 0, ¡el móvil aumenta su rapidez "
+            "hacia la izquierda! Regla física: Si 'v' y 'a' tienen el mismo signo, el cuerpo gana rapidez; "
+            "si tienen signos opuestos, pierde rapidez."
+        )
+        self._add_bullet(
+            parent,
+            "Frenado e Inversión de Sentido:",
+            "Si un móvil posee velocidad inicial hacia adelante (v₀ > 0) y aceleración opuesta (a < 0), "
+            "su velocidad desciende linealmente hasta anularse por completo (v = 0) en el instante "
+            "t_inv = -v₀ / a. Si la aceleración persiste, el cuerpo comienza a retroceder, aumentando su "
+            "rapidez en sentido contrario."
+        )
+
+        self._add_subheading(parent, "Gráficas Características del MRUA")
+        self._add_bullet(
+            parent,
+            "Posición vs. Tiempo [x-t]:",
+            "Es una curva parabólica: x(t) = x₀ + v₀·t + ½·a·t². La concavidad apunta hacia arriba si a > 0 "
+            "y hacia abajo si a < 0. El vértice de la parábola representa el instante en que v = 0."
+        )
+        self._add_bullet(
+            parent,
+            "Velocidad vs. Tiempo [v-t]:",
+            "Es una línea recta con pendiente m = a. Cruza el eje horizontal v = 0 en el instante de inversión."
+        )
+        self._add_bullet(
+            parent,
+            "Aceleración vs. Tiempo [a-t]:",
+            "Es una recta horizontal constante. El área bajo esta recta entre t₁ y t₂ representa el cambio total "
+            "de velocidad: Área = a · Δt = Δv."
+        )
+
+    def _populate_tab6(self, parent: tk.Frame) -> None:
+        """Contenido sobre Caída Libre y Lanzamiento Vertical."""
+        self._add_heading(parent, "Caída Libre y Lanzamiento Vertical")
+        self._add_paragraph(
+            parent,
+            "La caída libre y el lanzamiento vertical son aplicaciones directas del MRUA en una dimensión vertical, "
+            "donde la aceleración constante es provocada por la atracción gravitatoria del planeta (g)."
+        )
+
+        self._add_subheading(parent, "Convención de Signos Física Universal")
+        self._add_bullet(
+            parent,
+            "Eje Vertical (+y hacia arriba):",
+            "El origen y = 0 m se sitúa en la superficie del suelo. Posiciones por encima del suelo son y > 0."
+        )
+        self._add_bullet(
+            parent,
+            "Vector Gravedad (a = -g):",
+            "La aceleración gravitatoria siempre apunta hacia el centro del planeta (hacia abajo). Por tanto, "
+            "en las ecuaciones cartesianas con eje ascendente, a = -g (donde g = 9.81 m/s² en la Tierra, "
+            "1.62 m/s² en la Luna y 3.71 m/s² en Marte)."
+        )
+
+        self._add_subheading(parent, "Ecuaciones Horarias Verticales")
+        self._add_formula_box(parent, "y(t) = y₀ + v₀ · t - ½ · g · t²", "Posición / Altura [m]")
+        self._add_formula_box(parent, "v(t) = v₀ - g · t", "Velocidad Vertical Instantánea [m/s]")
+        self._add_formula_box(parent, "v² = v₀² - 2 · g · (y - y₀)", "Ecuación de Torricelli Vertical")
+
+        self._add_subheading(parent, "Puntos Notables del Lanzamiento Vertical")
+        self._add_bullet(
+            parent,
+            "Altura Máxima (h_máx):",
+            "Se alcanza cuando la velocidad vertical se anula momentáneamente (vy = 0). "
+            "Fórmula: h_máx = y₀ + v₀² / (2 · g)."
+        )
+        self._add_bullet(
+            parent,
+            "Tiempo de Subida (t_subida):",
+            "Tiempo necesario para que la gravedad frene el ascenso: t_subida = v₀ / g."
+        )
+        self._add_bullet(
+            parent,
+            "Tiempo de Vuelo Simétrico:",
+            "Tiempo para regresar a la altura de disparo (y = y₀): t_vuelo = 2 · v₀ / g."
+        )
+        self._add_bullet(
+            parent,
+            "Impacto contra el Suelo (y = 0):",
+            "Se resuelve haciendo y = 0: t_impacto = (v₀ + √(v₀² + 2·g·y₀)) / g. "
+            "La velocidad en ese instante apunta hacia abajo: v_impacto = -√(v₀² + 2·g·y₀)."
+        )
+
+    def _populate_tab7(self, parent: tk.Frame) -> None:
+        """Catálogo didáctico de ecuaciones y estrategias de despeje."""
+        self._add_heading(parent, "Estrategia para Resolver Problemas de Cinemática")
+        self._add_paragraph(
+            parent,
+            "Todo problema de cinemática con aceleración constante involucra cinco variables fundamentales:\n"
+            "• v₀ : Velocidad inicial\n"
+            "• v  : Velocidad final\n"
+            "• a  : Aceleración constante\n"
+            "• t  : Tiempo transcurrido\n"
+            "• Δx : Desplazamiento\n\n"
+            "Cada ecuación fundamental relaciona exactamente cuatro de estas variables, omitiendo una de ellas. "
+            "La clave para resolver cualquier ejercicio consiste en identificar cuál variable no interviene en el enunciado:"
+        )
+
+        self._add_subheading(parent, "Cuadro de Selección de Ecuaciones")
+        self._add_bullet(
+            parent,
+            "Sin Desplazamiento (no se conoce ni se busca Δx):",
+            "Usa: v = v₀ + a · t   ⇒   Despejes: v₀ = v - a·t  |  a = (v - v₀)/t  |  t = (v - v₀)/a"
+        )
+        self._add_bullet(
+            parent,
+            "Sin Tiempo (no se conoce ni se busca t):",
+            "Usa Torricelli: v² = v₀² + 2 · a · Δx   ⇒   v = ±√(v₀² + 2aΔx)  |  Δx = (v² - v₀²)/(2a)"
+        )
+        self._add_bullet(
+            parent,
+            "Sin Velocidad Final (no se conoce ni se busca v):",
+            "Usa: Δx = v₀ · t + ½ · a · t²   ⇒   x = x₀ + v₀·t + ½·a·t²"
+        )
+        self._add_bullet(
+            parent,
+            "Sin Aceleración (no se conoce ni se busca a):",
+            "Usa Velocidad Media: Δx = ½ · (v₀ + v) · t   ⇒   v_med = (v₀ + v) / 2"
+        )
+
+        self._add_subheading(parent, "Resolución de la Ecuación Cuadrática del Tiempo")
+        self._add_formula_box(parent, "½ · a · t² + v₀ · t - Δx = 0", "Forma estándar A·t² + B·t + C = 0")
+        self._add_paragraph(
+            parent,
+            "Al despejar el tiempo 't' conociendo Δx, v₀ y 'a', se obtiene una ecuación de segundo grado. "
+            "Sus soluciones se analizan físicamente según el discriminante Δ = B² - 4AC:\n"
+            "• Si Δ < 0: Raíces complejas. El cuerpo nunca alcanza esa coordenada con esa aceleración.\n"
+            "• Una raíz positiva y una negativa: Se descarta la raíz negativa (corresponde a instantes anteriores a t = 0).\n"
+            "• Dos raíces positivas: Ocurre en frenado y retroceso. La menor es el tiempo de ida; la mayor es el tiempo en que vuelve a cruzar esa posición tras invertir su marcha."
         )
 
     def _add_heading(self, parent: tk.Frame, text: str) -> None:

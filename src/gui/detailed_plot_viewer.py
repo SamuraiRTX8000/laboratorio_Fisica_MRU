@@ -16,7 +16,7 @@ de las gráficas en el plano cartesiano (X, Y):
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
@@ -25,7 +25,7 @@ import numpy as np
 
 from .theme import Theme
 from ..models.experiment_state import MeasurementSample, ExperimentSummary
-from ..models.physics import TrackConfig, MRUParameters
+from ..models.physics import TrackConfig, MRUParameters, MRUAParameters, FreeFallParameters
 
 
 class DetailedPlotViewer(tk.Toplevel):
@@ -36,8 +36,8 @@ class DetailedPlotViewer(tk.Toplevel):
         parent: tk.Widget,
         samples: List[MeasurementSample],
         summary: ExperimentSummary,
-        track: TrackConfig,
-        params: MRUParameters
+        track: Optional[TrackConfig],
+        params: Union[MRUParameters, MRUAParameters, FreeFallParameters]
     ) -> None:
         super().__init__(parent)
         self.samples = samples
@@ -45,7 +45,8 @@ class DetailedPlotViewer(tk.Toplevel):
         self.track = track
         self.params = params
 
-        self.title("Visor Científico Avanzado: Plano Cinemático en Detalle (MRU)")
+        mtype = getattr(self.summary, "motion_type", "MRU")
+        self.title(f"Visor Científico Avanzado: Plano Cinemático en Detalle ({mtype})")
         self.geometry("1180x820")
         self.minsize(980, 680)
         self.configure(bg=Theme.BG_DARK)
@@ -76,16 +77,18 @@ class DetailedPlotViewer(tk.Toplevel):
         title_box = tk.Frame(header_frame, bg=Theme.BG_CARD)
         title_box.pack(side=tk.LEFT)
 
+        mtype = getattr(self.summary, "motion_type", "MRU")
         tk.Label(
             title_box,
-            text="🔍 ANÁLISIS DETALLADO DEL PLANO CINEMÁTICO (MRU)",
+            text=f"🔍 ANÁLISIS DETALLADO DEL PLANO CINEMÁTICO ({mtype})",
             bg=Theme.BG_CARD,
             fg=Theme.PRIMARY,
             font=(Theme.FONT_FAMILY, 12, "bold")
         ).pack(anchor="w")
 
+        acc_part = f"  |  a = {self.summary.configured_acceleration:+.2f} m/s²" if self.summary.configured_acceleration != 0.0 else ""
         info_text = (
-            f"x₀ = {self.summary.x0:+.2f} m  |  v_conf = {self.summary.configured_velocity:+.2f} m/s  |  "
+            f"x₀ = {self.summary.x0:+.2f} m  |  v_conf = {self.summary.configured_velocity:+.2f} m/s{acc_part}  |  "
             f"x_final = {self.summary.x_final:+.2f} m  |  Δx = {self.summary.displacement:+.2f} m  |  "
             f"t_eff = {self.summary.t_eff:.2f} s  |  t_total = {self.summary.t_total:.2f} s  |  "
             f"Pausas: {self.summary.pause_count}"

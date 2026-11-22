@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Punto de Entrada Principal - Laboratorio Virtual de Cinemática (MRU).
+Punto de Entrada Principal - Laboratorio Virtual de Cinemática (MRU, MRUA y Caída Libre).
 
-Simulador interactivo para el estudio del Movimiento Rectilíneo Uniforme en Física I,
-diseñado para estudiantes de Ingeniería de Sistemas.
+Simulador interactivo y asistente de resolución de problemas para el estudio
+de la cinemática en Física I, diseñado con rigor pedagógico y computacional.
 
 Uso:
     python3 main.py
@@ -28,8 +28,12 @@ def main() -> None:
 
     def on_closing():
         try:
-            if app.controller:
+            if hasattr(app, "controller") and app.controller:
                 app.controller._cancel_scheduled_frame()
+            if hasattr(app, "mrua_controller") and app.mrua_controller:
+                app.mrua_controller._cancel_scheduled_frame()
+            if hasattr(app, "free_fall_controller") and app.free_fall_controller:
+                app.free_fall_controller._cancel_scheduled_frame()
         except Exception:
             pass
         root.destroy()

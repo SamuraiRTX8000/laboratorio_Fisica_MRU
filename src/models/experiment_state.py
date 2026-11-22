@@ -14,8 +14,17 @@ Garantiza la estricta separación entre:
 from enum import Enum, auto
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Callable
-from .physics import MRUPhysicsModel, PhysicalState, TrackConfig, MRUParameters
+from typing import List, Optional, Callable, Tuple, Union, Any
+from .physics import (
+    MRUPhysicsModel,
+    PhysicalState,
+    TrackConfig,
+    MRUParameters,
+    MRUAParameters,
+    MRUAPhysicsModel,
+    FreeFallParameters,
+    FreeFallPhysicsModel
+)
 
 
 class ExperimentStatus(Enum):
@@ -42,12 +51,13 @@ class MeasurementSample:
     sample_id: int
     t_total: float      # Tiempo total de experimento (s)
     t_eff: float        # Tiempo efectivo de movimiento (s)
-    position: float     # Posición x(t) (m)
+    position: float     # Posición x(t) o y(t) (m)
     displacement: float # Desplazamiento acumulado (m)
     distance: float     # Distancia acumulada (m)
     velocity: float     # Velocidad en ese instante (m/s) [0 durante pausas]
     speed: float        # Rapidez en ese instante (m/s) [0 durante pausas]
     status: str         # Estado en que se registró
+    acceleration: float = 0.0  # Aceleración en ese instante (m/s²)
 
 
 @dataclass
@@ -70,18 +80,34 @@ class ExperimentSummary:
     termination_reason: str
     is_mru_verified: bool
     explanation: str
+    configured_acceleration: float = 0.0
+    motion_type: str = "MRU"
 
 
 class ExperimentControllerModel:
     """
     Controlador lógico del experimento físico.
     Administra la máquina de estados, el tiempo monotónico y el historial de muestras.
+    Soporta de manera polimórfica modelos de MRU, MRUA y Caída Libre.
     """
 
-    def __init__(self, track: TrackConfig, params: MRUParameters) -> None:
+    def __init__(
+        self,
+        track: TrackConfig,
+        params: Union[MRUParameters, MRUAParameters, FreeFallParameters],
+        physics_model: Optional[Any] = None
+    ) -> None:
         self.track = track
         self.params = params
-        self.physics = MRUPhysicsModel(track, params)
+
+        if physics_model is not None:
+            self.physics = physics_model
+        elif isinstance(params, MRUAParameters):
+            self.physics = MRUAPhysicsModel(track, params)
+        elif isinstance(params, FreeFallParameters):
+            self.physics = FreeFallPhysicsModel(params)
+        else:
+            self.physics = MRUPhysicsModel(track, params)
 
         self._status = ExperimentStatus.READY
         self._sample_counter = 0
@@ -106,6 +132,38 @@ class ExperimentControllerModel:
         self._record_sample(self._current_physics_state, t_total=0.0, vel_override=None)
 
     @property
+    def initial_velocity(self) -> float:
+        if hasattr(self.params, "velocity"):
+            return self.params.velocity
+        elif hasattr(self.params, "v0"):
+            return self.params.v0
+        return 0.0
+
+    @property
+    def initial_position(self) -> float:
+        if hasattr(self.params, "x0"):
+            return self.params.x0
+        elif hasattr(self.params, "y0"):
+            return self.params.y0
+        return 0.0
+
+    @property
+    def configured_acceleration(self) -> float:
+        if hasattr(self.params, "acceleration"):
+            return self.params.acceleration
+        elif hasattr(self.params, "g"):
+            return -self.params.g
+        return 0.0
+
+    @property
+    def motion_type(self) -> str:
+        if isinstance(self.physics, FreeFallPhysicsModel) or isinstance(self.params, FreeFallParameters):
+            return "CAIDA_LIBRE"
+        elif isinstance(self.physics, MRUAPhysicsModel) or isinstance(self.params, MRUAParameters):
+            return "MRUA"
+        return "MRU"
+
+    @property
     def status(self) -> ExperimentStatus:
         return self._status
 
@@ -128,12 +186,13 @@ class ExperimentControllerModel:
         self._accumulated_eff_time = 0.0
         self._status = ExperimentStatus.RUNNING
 
-        # Si la velocidad configurada es 0, no habrá desplazamiento
-        if abs(self.params.velocity) < 1e-9:
-            self.termination_reason = "El vehículo está en reposo (v = 0 m/s)."
+        init_v = self.initial_velocity
+        init_a = self.configured_acceleration
+        if abs(init_v) < 1e-9 and abs(init_a) < 1e-9:
+            self.termination_reason = "El cuerpo está permanentemente en reposo (v = 0 m/s, a = 0 m/s²)."
 
         self._current_physics_state = self.physics.evaluate(0.0)
-        self._record_sample(self._current_physics_state, t_total=0.0, vel_override=self.params.velocity)
+        self._record_sample(self._current_physics_state, t_total=0.0, vel_override=init_v)
 
     def pause(self) -> None:
         """Pausa el experimento, congelando el tiempo efectivo."""
@@ -168,10 +227,10 @@ class ExperimentControllerModel:
         self._segment_start_perf = now
         self._status = ExperimentStatus.RUNNING
 
-        # Registrar muestra de reanudación (vuelve a la velocidad configurada)
+        # Registrar muestra de reanudación
         t_total = now - (self._wall_start_perf or now)
         self._current_physics_state = self.physics.evaluate(self._accumulated_eff_time)
-        self._record_sample(self._current_physics_state, t_total=t_total, vel_override=self.params.velocity)
+        self._record_sample(self._current_physics_state, t_total=t_total, vel_override=None)
 
     def stop(self, reason: str = "Detenido por el usuario") -> None:
         """Finaliza definitivamente el experimento actual."""
@@ -212,23 +271,24 @@ class ExperimentControllerModel:
             state = self.physics.evaluate(current_t_eff)
             self._current_physics_state = state
 
-            # Verificar si alcanzó el límite de la pista
+            # Verificar si alcanzó el límite o finalización
             if state.reached_boundary:
-                reason = (
-                    f"Alcanzó el límite superior x_max = {self.track.x_max:.2f} m."
-                    if state.boundary_name == "x_max"
-                    else f"Alcanzó el límite inferior x_min = {self.track.x_min:.2f} m."
-                )
+                if state.boundary_name == "x_max":
+                    reason = f"Alcanzó el límite superior x_max = {self.track.x_max:.2f} m."
+                elif state.boundary_name == "x_min":
+                    reason = f"Alcanzó el límite inferior x_min = {self.track.x_min:.2f} m."
+                elif state.boundary_name == "ground":
+                    reason = "Impactó contra el suelo (y = 0.00 m)."
+                else:
+                    reason = "Alcanzó el límite programado del movimiento."
                 self.stop(reason=reason)
             else:
-                self._record_sample(state, t_total=t_total, vel_override=self.params.velocity)
+                self._record_sample(state, t_total=t_total, vel_override=None)
 
         elif self._status == ExperimentStatus.PAUSED:
             now = time.perf_counter()
             t_total = now - (self._wall_start_perf or now)
-            # En pausa, la física no avanza en t_eff, pero se mantiene la posición
             state = self._current_physics_state
-            # Opcionalmente registrar muestra para mantener gráficas en tiempo global
             self._record_sample(state, t_total=t_total, vel_override=0.0)
 
         return self._current_physics_state
@@ -253,9 +313,8 @@ class ExperimentControllerModel:
         """Registra una muestra asegurando espaciado temporal adecuado."""
         inst_vel = vel_override if vel_override is not None else state.velocity
         inst_spd = abs(inst_vel)
+        inst_acc = 0.0 if (vel_override == 0.0 and self._status == ExperimentStatus.PAUSED) else state.acceleration
 
-        # Evitar sobrecargar el registro si el intervalo entre muestras es extremadamente corto (< 10 ms),
-        # salvo transiciones de estado importantes.
         if self._samples:
             last = self._samples[-1]
             if (t_total - last.t_total < 0.015) and (last.status == self._status.label):
@@ -270,7 +329,8 @@ class ExperimentControllerModel:
             distance=round(state.distance, 4),
             velocity=round(inst_vel, 4),
             speed=round(inst_spd, 4),
-            status=self._status.label
+            status=self._status.label,
+            acceleration=round(inst_acc, 4)
         )
         self._samples.append(sample)
         self._sample_counter += 1
@@ -289,32 +349,48 @@ class ExperimentControllerModel:
         v_avg_total = MRUPhysicsModel.calculate_average_velocity(disp, t_total)
         s_avg_total = MRUPhysicsModel.calculate_average_speed(dist, t_total)
 
-        # Verificación del modelo de MRU durante los intervalos de movimiento
-        # En MRU estricto: v_avg_eff debe coincidir con la velocidad configurada
-        expected_v = self.params.velocity
-        mru_verified = (abs(v_avg_eff - expected_v) < 1e-3) or (t_eff == 0 and abs(disp) < 1e-4)
+        expected_v = self.initial_velocity
+        expected_a = self.configured_acceleration
+        mtype = self.motion_type
 
-        if self.pause_count == 0:
+        if mtype == "MRU":
+            verified = (abs(v_avg_eff - expected_v) < 1e-3) or (t_eff == 0 and abs(disp) < 1e-4)
+            if self.pause_count == 0:
+                explanation = (
+                    "El experimento se ejecutó de forma continua sin pausas. Por tanto, "
+                    f"el tiempo efectivo coincide con el total (t_eff = t_total = {t_eff:.2f} s). "
+                    f"La velocidad media calculada ({v_avg_eff:.3f} m/s) es idéntica a la configurada ({expected_v:.3f} m/s), "
+                    "confirmando el comportamiento característico del Movimiento Rectilíneo Uniforme."
+                )
+            else:
+                explanation = (
+                    f"Se realizaron {self.pause_count} pausa(s) con duración acumulada de {self.total_pause_duration:.2f} s. "
+                    f"Durante el movimiento efectivo ({t_eff:.2f} s), la velocidad media fue {v_avg_eff:.3f} m/s, "
+                    f"mientras que respecto al tiempo global ({t_total:.2f} s) desciende a {v_avg_total:.3f} m/s "
+                    "debido al tiempo en reposo de las pausas."
+                )
+        elif mtype == "MRUA":
+            # En MRUA con aceleración constante, v_avg = (v0 + v_final)/2
+            v_theoretical_avg = (expected_v + state.velocity) / 2.0
+            verified = (abs(v_avg_eff - v_theoretical_avg) < 0.05) or (t_eff == 0)
             explanation = (
-                "El experimento se ejecutó de forma continua sin pausas. Por tanto, "
-                "el tiempo efectivo coincide exactamente con el tiempo total del experimento "
-                f"(t_eff = t_total = {t_eff:.2f} s). La velocidad media calculada "
-                f"({v_avg_eff:.3f} m/s) es idéntica a la velocidad configurada ({expected_v:.3f} m/s), "
-                "lo cual confirma el comportamiento característico del Movimiento Rectilíneo Uniforme."
+                f"Movimiento Rectilíneo Uniformemente Acelerado (a = {expected_a:+.2f} m/s²). "
+                f"La velocidad inicial fue v₀ = {expected_v:+.2f} m/s y la velocidad final alcanzada es v = {state.velocity:+.2f} m/s. "
+                f"La velocidad media en MRUA satisface v_med = (v₀ + v)/2 = {v_theoretical_avg:.2f} m/s. "
+                f"Desplazamiento total: Δx = {disp:+.2f} m, distancia recorrida: d = {dist:.2f} m."
             )
-        else:
+        else:  # CAIDA_LIBRE
+            verified = True
+            h_max_val = getattr(self.physics, "h_max", state.position)
+            t_impact_val = getattr(self.physics, "t_impact", t_eff)
             explanation = (
-                f"Se realizaron {self.pause_count} pausa(s) con una duración acumulada de "
-                f"{self.total_pause_duration:.2f} s. "
-                f"Durante los lapsos de movimiento efectivo ({t_eff:.2f} s), el vehículo mantuvo "
-                f"la velocidad constante configurada de {expected_v:.3f} m/s (v_med_efectiva = {v_avg_eff:.3f} m/s). "
-                f"Sin embargo, al considerar el tiempo global de pared ({t_total:.2f} s), la velocidad media global "
-                f"desciende a {v_avg_total:.3f} m/s debido al tiempo en reposo de las pausas. "
-                "Esto demuestra pedagógicamente la distinción crucial entre tiempo de movimiento y tiempo total de observación."
+                f"Caída Libre / Lanzamiento Vertical bajo aceleración gravitatoria g = {abs(expected_a):.2f} m/s². "
+                f"Altura inicial: y₀ = {self.initial_position:.2f} m. Altura máxima alcanzada: {h_max_val:.2f} m. "
+                f"Tiempo de vuelo estimado: {t_impact_val:.2f} s. Velocidad final: {state.velocity:+.2f} m/s."
             )
 
         return ExperimentSummary(
-            x0=self.params.x0,
+            x0=self.initial_position,
             x_final=state.position,
             configured_velocity=expected_v,
             configured_speed=abs(expected_v),
@@ -329,6 +405,8 @@ class ExperimentControllerModel:
             v_avg_total=v_avg_total,
             s_avg_total=s_avg_total,
             termination_reason=self.termination_reason,
-            is_mru_verified=mru_verified,
-            explanation=explanation
+            is_mru_verified=verified,
+            explanation=explanation,
+            configured_acceleration=expected_a,
+            motion_type=mtype
         )

@@ -8,9 +8,9 @@ con metadatos científicos, unidades en el Sistema Internacional (SI) y formato 
 import csv
 import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 from ..models.experiment_state import MeasurementSample, ExperimentSummary
-from ..models.physics import TrackConfig, MRUParameters
+from ..models.physics import TrackConfig, MRUParameters, MRUAParameters, FreeFallParameters
 
 
 class ExperimentDataExporter:
@@ -20,23 +20,66 @@ class ExperimentDataExporter:
     def generate_csv_content(
         samples: List[MeasurementSample],
         summary: ExperimentSummary,
-        track: TrackConfig,
-        params: MRUParameters,
-        title: str = "Laboratorio Virtual de Cinemática - Movimiento Rectilíneo Uniforme"
+        track: Optional[TrackConfig],
+        params: Union[MRUParameters, MRUAParameters, FreeFallParameters],
+        title: Optional[str] = None
     ) -> str:
         """Genera el contenido textual en formato CSV con metadatos y tabla de datos."""
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Determinar magnitudes iniciales según el tipo de parámetros
+        if isinstance(params, MRUAParameters):
+            x0_val = params.x0
+            v0_val = params.v0
+            a_val = params.acceleration
+            default_title = "Laboratorio Virtual de Cinemática - MRUA"
+        elif isinstance(params, FreeFallParameters):
+            x0_val = params.y0
+            v0_val = params.v0
+            a_val = -params.g
+            default_title = "Laboratorio Virtual de Cinemática - Caída Libre"
+        else:
+            x0_val = params.x0
+            v0_val = params.velocity
+            a_val = 0.0
+            default_title = "Laboratorio Virtual de Cinemática - Movimiento Rectilíneo Uniforme (MRU)"
+
+        exp_title = title or default_title
         lines = [
             f"# ====================================================================",
-            f"# {title.upper()}",
+            f"# {exp_title.upper()}",
             f"# METADATOS EXPERIMENTALES REGISTRADOS",
             f"# ====================================================================",
             f"# Fecha de registro: {now_str}",
-            f"# Limites de la pista: [{track.x_min:.2f} m, {track.x_max:.2f} m] (Longitud: {track.total_length:.2f} m)",
-            f"# Posicion inicial (x0): {params.x0:.4f} m",
-            f"# Velocidad configurada (v): {params.velocity:.4f} m/s",
-            f"# Rapidez configurada (|v|): {params.speed:.4f} m/s",
+        ]
+
+        if isinstance(params, MRUAParameters):
+            track_desc = f"[{track.x_min:.2f} m, {track.x_max:.2f} m] (Longitud: {track.total_length:.2f} m)" if track else "Libre"
+            lines.extend([
+                f"# Limites de la pista: {track_desc}",
+                f"# Posicion inicial (x0): {params.x0:.4f} m",
+                f"# Velocidad inicial (v0): {params.v0:.4f} m/s",
+                f"# Aceleracion configurada (a): {params.acceleration:+.4f} m/s²",
+                f"# Rapidez configurada (|v0|): {params.speed0:.4f} m/s",
+            ])
+        elif isinstance(params, FreeFallParameters):
+            lines.extend([
+                f"# Escenario: Caida Libre / Lanzamiento Vertical",
+                f"# Altura inicial (y0): {params.y0:.4f} m",
+                f"# Velocidad inicial (v0): {params.v0:.4f} m/s",
+                f"# Gravedad configurada (g): {params.g:.4f} m/s²",
+                f"# Rapidez configurada (|v0|): {params.speed0:.4f} m/s",
+            ])
+        else:
+            track_desc = f"[{track.x_min:.2f} m, {track.x_max:.2f} m] (Longitud: {track.total_length:.2f} m)" if track else "[-50.00 m, 50.00 m]"
+            lines.extend([
+                f"# Limites de la pista: {track_desc}",
+                f"# Posicion inicial (x0): {params.x0:.4f} m",
+                f"# Velocidad configurada (v): {params.velocity:.4f} m/s",
+                f"# Rapidez configurada (|v|): {params.speed:.4f} m/s",
+            ])
+
+        lines.extend([
             f"# Tiempo efectivo de movimiento: {summary.t_eff:.4f} s",
             f"# Tiempo total del experimento: {summary.t_total:.4f} s",
             f"# Numero de pausas: {summary.pause_count}",
@@ -49,11 +92,11 @@ class ExperimentDataExporter:
             f"# Velocidad media global: {summary.v_avg_total:.4f} m/s",
             f"# Rapidez media global: {summary.s_avg_total:.4f} m/s",
             f"# Razon de finalizacion: {summary.termination_reason}",
-            f"# MRU Verificado en intervalos de movimiento: {'SI' if summary.is_mru_verified else 'NO'}",
+            f"# Modelo fisico: {summary.motion_type}",
             f"# ====================================================================",
             f"# DATOS TELEMETRICOS DE LA SIMULACION (MUESTRAS REALES)",
             f"# ====================================================================",
-        ]
+        ])
 
         # Encabezado CSV
         headers = [
@@ -65,11 +108,13 @@ class ExperimentDataExporter:
             "Distancia_Recorrida_m",
             "Velocidad_Instantanea_m_s",
             "Rapidez_Instantanea_m_s",
+            "Aceleracion_Instantanea_m_s2",
             "Estado_Simulacion"
         ]
         lines.append(",".join(headers))
 
         for s in samples:
+            acc_str = f"{getattr(s, 'acceleration', a_val):.4f}"
             row = [
                 str(s.sample_id),
                 f"{s.t_total:.4f}",
@@ -79,6 +124,7 @@ class ExperimentDataExporter:
                 f"{s.distance:.4f}",
                 f"{s.velocity:.4f}",
                 f"{s.speed:.4f}",
+                acc_str,
                 s.status
             ]
             lines.append(",".join(row))
@@ -91,8 +137,8 @@ class ExperimentDataExporter:
         filepath: str,
         samples: List[MeasurementSample],
         summary: ExperimentSummary,
-        track: TrackConfig,
-        params: MRUParameters
+        track: Optional[TrackConfig],
+        params: Union[MRUParameters, MRUAParameters, FreeFallParameters]
     ) -> Path:
         """Exporta los datos reales a un archivo CSV en disco."""
         content = cls.generate_csv_content(samples, summary, track, params)
